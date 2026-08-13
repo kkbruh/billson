@@ -18,6 +18,7 @@ import { InboxScreen, type InboxItem } from './components/InboxScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
 import { IntegrationsScreen } from './components/IntegrationsScreen';
+import { CmmsBillsScreen } from './components/CmmsBillsScreen';
 
 type Theme = 'light' | 'dark';
 
@@ -216,7 +217,7 @@ export default function App() {
   }
 
   // The 3-column workspaces need the full width; the list pages read better narrow.
-  const wide = screen === 'review' || screen === 'inbox';
+  const wide = screen === 'review' || screen === 'inbox' || screen === 'cmms';
 
   return (
     <div className="app">
@@ -294,6 +295,8 @@ export default function App() {
             onGoToInbox={() => setScreen('review')}
           />
         )}
+
+        {screen === 'cmms' && <CmmsBillsScreen />}
 
         {screen === 'integrations' && <IntegrationsScreen />}
       </main>

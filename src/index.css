@@ -2297,3 +2297,90 @@ textarea {
 .intg-map-row__input {
   max-width: 320px;
 }
+
+/* ── CMMS Bills (read-only Facilio module view) ───────────────────────────── */
+.cmms-lead {
+  margin: 0 0 var(--spacing-containerLarge);
+  font-size: var(--typography-captionReg12-fontSize);
+}
+.cmms-lead code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--colors-backgroundMidgroundSubtle);
+  padding: 1px 5px;
+  border-radius: var(--border-medium);
+}
+
+.cmms-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--typography-bodyReg14-fontSize);
+  white-space: nowrap;
+}
+.cmms-table thead th {
+  text-align: left;
+  padding: var(--spacing-containerLarge) var(--spacing-containerXLarge);
+  font-size: var(--typography-captionReg12-fontSize);
+  color: var(--colors-textCaption);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--colors-borderNeutralBaseSubtler);
+  background: var(--colors-backgroundMidgroundSubtle);
+  position: sticky;
+  top: 0;
+}
+.cmms-table td {
+  padding: var(--spacing-containerLarge) var(--spacing-containerXLarge);
+  border-bottom: 0.5px solid var(--colors-borderNeutralBaseSubtler);
+  color: var(--colors-textMain);
+  vertical-align: middle;
+}
+.cmms-table__num {
+  text-align: right;
+}
+.cmms-table__name {
+  font-weight: 600;
+}
+.cmms-row {
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+.cmms-row:hover {
+  background: var(--colors-backgroundMidgroundSubtle);
+}
+.cmms-row--open {
+  background: var(--colors-backgroundMidgroundSubtle);
+}
+.cmms-file {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: inline-block;
+  vertical-align: middle;
+}
+.cmms-open {
+  padding: 4px 10px;
+}
+.cmms-detail > td {
+  background: var(--colors-backgroundContainer);
+  white-space: normal;
+}
+.cmms-detail__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--spacing-containerLarge);
+  margin: 0;
+}
+.cmms-detail__grid dt {
+  font-size: var(--typography-captionReg12-fontSize);
+  color: var(--colors-textCaption);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 2px;
+}
+.cmms-detail__grid dd {
+  margin: 0;
+  color: var(--colors-textMain);
+}
+.cmms-detail__wide {
+  grid-column: 1 / -1;
+}
