@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { vibe } from './vibe';
 import {
   BILLS_TOPIC,
@@ -51,6 +51,12 @@ export default function App() {
 
   // Owned here so the Inbox survives navigating between screens mid-run.
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  // CMMS record ids already pushed into the Inbox — kept at App level so the
+  // "In Inbox" state (and dedupe) survive navigating away from the CMMS tab.
+  // The ref is the synchronous source of truth (reliable under concurrent adds);
+  // the state mirror drives rendering.
+  const cmmsAddedRef = useRef<Set<number>>(new Set());
+  const [cmmsAdded, setCmmsAdded] = useState<Set<number>>(new Set());
 
   // Session-scoped per-field evidence, keyed by saved bill id. Not persisted —
   // provenance has no database column, so Review shows it only for bills parsed
@@ -137,6 +143,35 @@ export default function App() {
     }
   };
 
+  // Drop a fetched CMMS bill PDF into the Bills Inbox as a normal item, so it
+  // flows through the existing Parse → Review pipeline.
+  const addToInbox = useCallback((file: File, origin: string, recordId?: number) => {
+    // Idempotent by record id: re-adding the same CMMS record is a no-op, so a
+    // repeated click or a re-run of "Add all" never creates duplicate items.
+    // The ref check is synchronous, so it holds even under many concurrent adds.
+    if (recordId != null) {
+      if (cmmsAddedRef.current.has(recordId)) return;
+      cmmsAddedRef.current.add(recordId);
+      setCmmsAdded(new Set(cmmsAddedRef.current));
+    }
+    setInboxItems((rows) => [
+      ...rows,
+      {
+        key: `cmms-${recordId ?? file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        name: file.name,
+        sizeBytes: file.size,
+        origin,
+        addedAt: Date.now(),
+        status: null,
+        reason: null,
+        bill: null,
+        fileId: null,
+        savedId: null,
+      },
+    ]);
+  }, []);
+
   const handleDelete = async (bill: SavedBill) => {
     const label = bill.vendor_name ?? 'this bill';
     if (
@@ -151,6 +186,20 @@ export default function App() {
       await deleteBill(bill.id);
       await refresh(search);
       setToast('Bill removed.');
+    } catch (err) {
+      setListError(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** Persist a status change from the Review detail (confirm / send back to queue). */
+  const setStatus = async (bill: SavedBill, status: SavedBill['status'], msg: string) => {
+    setBusyId(bill.id);
+    try {
+      await saveBill({ ...bill, status, reviewed_by: user?.email ?? null }, bill.id);
+      await refresh(search);
+      setToast(msg);
     } catch (err) {
       setListError(errorMessage(err));
     } finally {
@@ -277,7 +326,9 @@ export default function App() {
               search={search}
               onSearch={setSearch}
               onSave={handleSave}
-              onDelete={(b) => void handleDelete(b)}
+              onConfirm={(b) => void setStatus(b, 'confirmed', 'Confirmed & mapped.')}
+              onSendToQueue={(b) => void setStatus(b, 'flagged', 'Sent to the review queue.')}
+              onReject={(b) => void handleDelete(b)}
               onExport={() =>
                 downloadCsv(bills, `bills-${new Date().toISOString().slice(0, 10)}.csv`)
               }
@@ -295,7 +346,13 @@ export default function App() {
             />
           )}
 
-          {nav === 'cmms' && <CmmsBillsScreen />}
+          {nav === 'cmms' && (
+            <CmmsBillsScreen
+              onSendToInbox={addToInbox}
+              onGoToInbox={() => setNav('inbox')}
+              addedIds={cmmsAdded}
+            />
+          )}
 
           {nav === 'sources' && <IntegrationsScreen />}
 
