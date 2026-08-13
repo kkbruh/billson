@@ -2937,3 +2937,167 @@ textarea {
     justify-content: center;
   }
 }
+
+/* ── Integrations (Sources tab) — connector cards ─────────────────────────── */
+.bi-conn-section {
+  display: grid;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-conn-list {
+  display: grid;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-conn-card {
+  background: var(--colors-backgroundContainer);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+  padding: var(--spacing-containerXLarge) var(--spacing-containerXxLarge);
+  display: grid;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-conn-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerLarge);
+  flex-wrap: wrap;
+}
+
+.bi-conn-card__id {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.bi-conn-card__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--colors-textMain);
+}
+
+.bi-conn-card__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-conn-card__hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--colors-textCaption);
+}
+
+.bi-conn-card__hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  background: var(--colors-backgroundMidgroundSubtle);
+  padding: 1px 5px;
+  border-radius: var(--border-medium);
+}
+
+.bi-conn-card__body {
+  border-top: 1px solid var(--colors-borderNeutralBaseSubtler);
+  padding-top: var(--spacing-containerLarge);
+  display: grid;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-conn-textarea {
+  width: 100%;
+  min-height: 92px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.bi-conn-actions {
+  display: flex;
+  gap: var(--spacing-containerLarge);
+}
+
+/* teal-tint the FDS toggle inside connector cards to match the shell accent */
+.bi-conn-card .toggle input:checked + .toggle__track {
+  background: var(--bi-accent);
+  border-color: var(--bi-accent);
+}
+
+/* field-map editor: our field → their field */
+.bi-map-group {
+  display: grid;
+  gap: var(--spacing-containerMedium);
+}
+
+.bi-map-group__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--colors-textCaption);
+}
+
+.bi-map-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-map-row__key {
+  width: 150px;
+  flex-shrink: 0;
+  font-size: 13px;
+  color: var(--colors-textDescription);
+}
+
+.bi-map-row__arrow {
+  color: var(--colors-textCaption);
+}
+
+.bi-map-row__input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── CMMS Bills table extras ──────────────────────────────────────────────── */
+.bi-table .bi-num {
+  text-align: right;
+}
+
+.bi-cmms-row {
+  cursor: pointer;
+}
+
+.bi-cmms-detail td {
+  background: var(--colors-backgroundMidgroundSubtle);
+}
+
+.bi-detail__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--spacing-containerLarge);
+  margin: 0;
+  padding: var(--spacing-containerLarge) 0;
+}
+
+.bi-detail__grid dt {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--colors-textCaption);
+  margin-bottom: 2px;
+}
+
+.bi-detail__grid dd {
+  margin: 0;
+  font-size: 13px;
+  color: var(--colors-textMain);
+}
+
+.bi-detail__wide {
+  grid-column: 1 / -1;
+}

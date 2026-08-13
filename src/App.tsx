@@ -20,6 +20,8 @@ import { Placeholder } from './components/Placeholder';
 import { InboxScreen, type InboxItem } from './components/InboxScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
+import { IntegrationsScreen } from './components/IntegrationsScreen';
+import { CmmsBillsScreen } from './components/CmmsBillsScreen';
 
 type Theme = 'light' | 'dark';
 
@@ -293,6 +295,10 @@ export default function App() {
             />
           )}
 
+          {nav === 'cmms' && <CmmsBillsScreen />}
+
+          {nav === 'sources' && <IntegrationsScreen />}
+
           {nav === 'reports' && (
             <Placeholder
               icon="reports"
@@ -312,13 +318,6 @@ export default function App() {
               icon="clients"
               title="Clients & Providers"
               blurb="A directory of clients and utility providers to attribute each bill to. Not modelled yet — bills carry the parsed provider name only."
-            />
-          )}
-          {nav === 'sources' && (
-            <Placeholder
-              icon="sources"
-              title="Sources"
-              blurb="Connect Google Drive, SharePoint and mail rules so bills are fetched automatically. Manual upload and product fetch are live today."
             />
           )}
           {nav === 'settings' && (

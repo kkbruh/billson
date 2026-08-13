@@ -5,6 +5,7 @@ export type NavKey =
   | 'dashboard'
   | 'inbox'
   | 'review'
+  | 'cmms'
   | 'templates'
   | 'clients'
   | 'sources'
@@ -22,9 +23,10 @@ export const NAV: NavDef[] = [
   { key: 'dashboard', label: 'Home/Dashboard', icon: 'dashboard' },
   { key: 'inbox', label: 'Bills Inbox', icon: 'inbox' },
   { key: 'review', label: 'Review Queue', icon: 'review' },
+  { key: 'cmms', label: 'CMMS Bills', icon: 'cmms' },
   { key: 'templates', label: 'Templates', icon: 'templates' },
   { key: 'clients', label: 'Clients & Providers', icon: 'clients' },
-  { key: 'sources', label: 'Sources', icon: 'sources' },
+  { key: 'sources', label: 'Sources & Integrations', icon: 'sources' },
   { key: 'reports', label: 'Reports', icon: 'reports' },
 ];
 
@@ -33,9 +35,10 @@ export const NAV_TITLE: Record<NavKey, string> = {
   dashboard: 'Home',
   inbox: 'Bills Inbox',
   review: 'Review Queue',
+  cmms: 'Facilio Bills (CMMS)',
   templates: 'Templates',
   clients: 'Clients & Providers',
-  sources: 'Sources',
+  sources: 'Sources & Integrations',
   reports: 'Reports',
   settings: 'Settings',
 };
