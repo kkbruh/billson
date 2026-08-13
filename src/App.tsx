@@ -20,6 +20,7 @@ import { Placeholder } from './components/Placeholder';
 import { InboxScreen, type InboxItem } from './components/InboxScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
+import { SourcesScreen } from './components/SourcesScreen';
 
 type Theme = 'light' | 'dark';
 
@@ -314,13 +315,7 @@ export default function App() {
               blurb="A directory of clients and utility providers to attribute each bill to. Not modelled yet — bills carry the parsed provider name only."
             />
           )}
-          {nav === 'sources' && (
-            <Placeholder
-              icon="sources"
-              title="Sources"
-              blurb="Connect Google Drive, SharePoint and mail rules so bills are fetched automatically. Manual upload and product fetch are live today."
-            />
-          )}
+          {nav === 'sources' && <SourcesScreen />}
           {nav === 'settings' && (
             <Placeholder
               icon="settings"

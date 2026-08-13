@@ -1,0 +1,347 @@
+→ registry  (built)
+  Integration registry: entry/exit points with live probe status, config and field maps
+  --- code ---
+import StudioFunctions, { StudioDatabase } from "@facilio/studio-functions";
+
+/**
+ * Integration registry — the config layer for bill intake and output.
+ *
+ * Entry points (sources) and exit points (destinations) are DATA, not code, so
+ * adding Gmail or Xero later is a row plus a driver rather than a rewrite.
+ *
+ * Status is deliberately four-valued, not a boolean. SharePoint is the reason:
+ * its connection reports ACTIVE and every read returns 200 with an empty body.
+ * A connector can be authorized and still useless, so `probe` CALLS the thing
+ * and judges it on what comes back:
+ *
+ *   live        — authorized and a real probe returned usable data
+ *   degraded    — authorized, but the probe came back empty//unusable
+ *   needs_auth  — connector exists, no connected account
+ *   unavailable — no such connector in this org's catalog
+ *
+ * Everything in the catalogue below is verified present (or verified absent)
+ * against this org, not assumed.
+ */
+
+const server = new StudioFunctions({ name: "registry" });
+
+const CATALOG_SOURCES = [
+  {
+    kind: "outlook",
+    display: "Outlook mailbox",
+    probe: { connection: "outlook", action: "list-inbox-and-folder-messages", input: { top: 1 }, expect: "messages" },
+    configHint: "Optional folder to watch; defaults to the inbox.",
+  },
+  {
+    kind: "gmail",
+    display: "Gmail mailbox",
+    probe: { connection: "gmail", action: "list-messages", input: { max_results: 1 }, expect: "messages" },
+    configHint: "Optional label to watch; defaults to the inbox.",
+  },
+  {
+    kind: "google-drive",
+    display: "Google Drive folder",
+    probe: { connection: "google-drive", action: "find-file", input: { pageSize: 1 }, expect: "files" },
+    configHint: "Folder id to watch. Files added there become bills.",
+  },
+  {
+    kind: "sharepoint",
+    display: "SharePoint / OneDrive folder",
+    // Probe the action we actually DEPEND on (listing a folder), not one that
+    // merely proves auth. search-sites succeeds here while every path-based
+    // read returns 200-with-nothing — probing the easy one would report a
+    // broken connector as healthy, which is the exact failure this field exists
+    // to catch.
+    probe: {
+      connection: "sharepoint",
+      action: "list-files",
+      input: { site_id: "facilio958-my.sharepoint.com:/personal/krishna_k_facilio_com:", folder_path: "Bills" },
+      expect: "items",
+    },
+    configHint:
+      "Site id + list id. NOTE: this connector's path-based actions return empty on success — treat with caution.",
+  },
+];
+
+const CATALOG_DESTINATIONS = [
+  {
+    kind: "facilio",
+    display: "Facilio CMMS (Bills module)",
+    probe: { connection: "facilio-cmms", action: "list-modules", input: {}, expect: "data" },
+    configHint: "Writes to the custom_bills module. Currently the live destination.",
+  },
+  {
+    kind: "xero",
+    display: "Xero",
+    probe: { connection: "xero", action: "get-organisation-details", input: {}, expect: "" },
+    configHint: "Bills become ACCPAY invoices. Upsert semantics help with retries.",
+  },
+  {
+    kind: "quickbooks-online",
+    display: "QuickBooks Online",
+    probe: { connection: "quickbooks-online", action: "get-company-info", input: {}, expect: "" },
+    configHint: "Needs realmId and a VendorRef id — vendor resolution required.",
+  },
+  {
+    kind: "netsuite",
+    display: "NetSuite",
+    probe: { connection: "netsuite", action: "list-vendors", input: {}, expect: "" },
+    configHint: "Creates a true vendor bill.",
+  },
+  {
+    kind: "sage-intacct",
+    display: "Sage Intacct",
+    probe: { connection: "sage-intacct", action: "list-vendors", input: {}, expect: "" },
+    configHint: "Creates an AP bill.",
+  },
+  {
+    kind: "oracle-fusion-erp",
+    display: "Oracle Fusion ERP",
+    probe: { connection: "oracle-fusion-erp", action: "list-payables-payments", input: {}, expect: "" },
+    configHint: "Creates a payables invoice.",
+  },
+];
+
+function db() {
+  return new StudioDatabase({
+    userName: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    schema: process.env.SCHEMA,
+  });
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function jsonText(v: unknown, fallback: string): string {
+  if (v === null || v === undefined) return fallback;
+  const s = String(v).trim();
+  return s.length ? s : fallback;
+}
+
+/** Is this connector present in the org, and does it have a connected account? */
+async function connectionState(slug: string): Promise<{ present: boolean; connected: boolean; detail: string }> {
+  const url = `${process.system.CONNECTIONS_URL}/api/v1/connections/${slug}`;
+  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  if (res.status === 404) return { present: false, connected: false, detail: "not in this org's catalog" };
+  const body = await res.text();
+  if (!res.ok) return { present: false, connected: false, detail: `lookup failed: ${res.status}` };
+  const hasAccount = body.indexOf('"connected_account_count":0') < 0 && body.indexOf("connected_account_count") >= 0;
+  return {
+    present: true,
+    connected: hasAccount,
+    detail: hasAccount ? "account connected" : "no connected account",
+  };
+}
+
+/**
+ * Actually call the connector and judge it on the response. A connector that
+ * answers 200 with nothing useful is reported `degraded`, not `live` — the
+ * distinction SharePoint taught us.
+ */
+async function probe(p: any): Promise<{ status: string; detail: string }> {
+  if (!p || !p.connection) return { status: "unavailable", detail: "no probe defined" };
+
+  const state = await connectionState(p.connection);
+  if (!state.present) return { status: "unavailable", detail: state.detail };
+  if (!state.connected) return { status: "needs_auth", detail: "connector available, not authorized" };
+
+  const url = `${process.system.CONNECTIONS_URL}/api/v1/connections/${p.connection}/actions/${p.action}/execute`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: p.input || {} }),
+    });
+    const raw = await res.text();
+    if (!res.ok) return { status: "degraded", detail: `probe ${res.status}: ${raw.slice(0, 120)}` };
+
+    let parsed: any = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      return { status: "degraded", detail: "probe returned non-JSON" };
+    }
+    // An empty object/array back from a successful call is the SharePoint smell.
+    const body = parsed && parsed.output !== undefined ? parsed.output : parsed;
+    if (!body || (typeof body === "object" && Object.keys(body).length === 0)) {
+      return { status: "degraded", detail: "probe returned 200 with an empty body" };
+    }
+    if (p.expect) {
+      const v = body[p.expect];
+      if (v === undefined) {
+        return { status: "degraded", detail: `probe response missing "${p.expect}"` };
+      }
+      // Probes point at a location known to hold data, so an EMPTY result is a
+      // failure signal, not an empty folder. SharePoint returns
+      // {"items":[],"count":0} here for a folder that demonstrably has content —
+      // the key is present, so a mere existence check would call it healthy.
+      const empty =
+        (Array.isArray(v) && v.length === 0) ||
+        (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v).length === 0);
+      if (empty) {
+        return {
+          status: "degraded",
+          detail: `probe returned an empty "${p.expect}" where content was expected`,
+        };
+      }
+    }
+    return { status: "live", detail: "probe returned data" };
+  } catch (e: any) {
+    return { status: "degraded", detail: String(e?.message || e).slice(0, 160) };
+  }
+}
+
+function upsertRow(table: string, kind: string, display: string, hint: string, st: any) {
+  const conn = db();
+  const stamp = nowIso();
+  const { rows } = conn.query(`select id from ${table} where kind = $1`, [kind]);
+  if (rows.length) {
+    conn.query(
+      `update ${table} set display_name = $1, status = $2, status_detail = $3, updated_at = $4 where kind = $5`,
+      [display, st.status, `${st.detail} — ${hint}`, stamp, kind]
+    );
+    return "updated";
+  }
+  const id = `${kind}_${Date.now().toString(36)}`;
+  const cols =
+    table === "integration_sources"
+      ? `(id, kind, display_name, enabled, status, status_detail, config, created_at, updated_at)`
+      : `(id, kind, display_name, enabled, status, status_detail, config, field_map, created_at, updated_at)`;
+  const vals =
+    table === "integration_sources"
+      ? [id, kind, display, "false", st.status, `${st.detail} — ${hint}`, "{}", stamp, stamp]
+      : [id, kind, display, "false", st.status, `${st.detail} — ${hint}`, "{}", "{}", stamp, stamp];
+  const ph = vals.map((_, i) => `$${i + 1}`).join(", ");
+  conn.query(`insert into ${table} ${cols} values (${ph})`, vals);
+  return "created";
+}
+
+// ── handlers ──────────────────────────────────────────────────────────────────
+
+server.addHandler({
+  name: "sync-catalog",
+  description:
+    "Probe every known entry and exit point, then upsert its live status into the registry. Run on demand or on a schedule so the settings screen reflects reality rather than what was true at setup.",
+  parameters: {
+    only: { description: "Optional kind to refresh alone, e.g. 'outlook'", type: "string" },
+  },
+  execute: async (args) => {
+    const only = String(args.only || "").trim();
+    const sources: any[] = [];
+    const destinations: any[] = [];
+
+    for (const c of CATALOG_SOURCES) {
+      if (only && c.kind !== only) continue;
+      const st = await probe(c.probe);
+      upsertRow("integration_sources", c.kind, c.display, c.configHint, st);
+      sources.push({ kind: c.kind, display: c.display, ...st });
+    }
+    for (const c of CATALOG_DESTINATIONS) {
+      if (only && c.kind !== only) continue;
+      const st = await probe(c.probe);
+      upsertRow("integration_destinations", c.kind, c.display, c.configHint, st);
+      destinations.push({ kind: c.kind, display: c.display, ...st });
+    }
+    return { ok: true, checkedAt: nowIso(), sources, destinations };
+  },
+});
+
+server.addHandler({
+  name: "list-integrations",
+  description: "The settings view: every entry and exit point with its stored status, config and enabled flag.",
+  parameters: {},
+  execute: async () => {
+    const conn = db();
+    const { rows: s } = conn.query(
+      `select kind, display_name, enabled, status, status_detail, config, cursor, last_poll_at, last_error
+         from integration_sources where kind <> 'seed' order by kind`
+    );
+    const { rows: d } = conn.query(
+      `select kind, display_name, enabled, status, status_detail, config, field_map, last_push_at, last_error
+         from integration_destinations where kind <> 'seed' order by kind`
+    );
+    return { sources: s, destinations: d };
+  },
+});
+
+server.addHandler({
+  name: "configure",
+  description:
+    "Enable/disable an integration and set its config JSON (e.g. which folder or label to watch, or a destination's field map).",
+  parameters: {
+    side: { description: "'source' or 'destination'", type: "string" },
+    kind: { description: "Integration kind, e.g. 'outlook'", type: "string" },
+    enabled: { description: "'true' or 'false'", type: "string" },
+    config: { description: "Config as a JSON object string", type: "string" },
+    fieldMap: { description: "Destination only: field map as a JSON object string", type: "string" },
+  },
+  execute: async (args) => {
+    const side = String(args.side || "").toLowerCase();
+    const kind = String(args.kind || "").trim();
+    if (!kind) throw new Error("kind is required");
+    const table = side === "destination" ? "integration_destinations" : "integration_sources";
+
+    const conn = db();
+    const { rows } = conn.query(`select id from ${table} where kind = $1`, [kind]);
+    if (!rows.length) throw new Error(`${kind} is not in the registry — run sync-catalog first`);
+
+    const enabled = String(args.enabled || "").trim();
+    const config = jsonText(args.config, "");
+    const fieldMap = jsonText(args.fieldMap, "");
+
+    // Validate JSON here rather than letting a malformed blob fail at poll time.
+    for (const [label, v] of [["config", config], ["fieldMap", fieldMap]] as any[]) {
+      if (v) {
+        try {
+          JSON.parse(v);
+        } catch (e) {
+          throw new Error(`${label} is not valid JSON`);
+        }
+      }
+    }
+
+    if (enabled) conn.query(`update ${table} set enabled = $1, updated_at = $2 where kind = $3`, [enabled === "true" ? "true" : "false", nowIso(), kind]);
+    if (config) conn.query(`update ${table} set config = $1, updated_at = $2 where kind = $3`, [config, nowIso(), kind]);
+    if (fieldMap && table === "integration_destinations")
+      conn.query(`update ${table} set field_map = $1, updated_at = $2 where kind = $3`, [fieldMap, nowIso(), kind]);
+
+    const { rows: after } = conn.query(`select * from ${table} where kind = $1`, [kind]);
+    return { ok: true, row: after[0] };
+  },
+});
+
+server.addHandler({
+  name: "test-connection",
+  description:
+    "Probe one integration right now and return what actually came back. Use before enabling — 'authorized' is not the same as 'working'.",
+  parameters: { kind: { description: "Integration kind", type: "string" } },
+  execute: async (args) => {
+    const kind = String(args.kind || "").trim();
+    const all = CATALOG_SOURCES.concat(CATALOG_DESTINATIONS as any);
+    let found: any = null;
+    for (const c of all) if (c.kind === kind) found = c;
+    if (!found) throw new Error(`unknown integration: ${kind}`);
+    const st = await probe(found.probe);
+    return { kind, display: found.display, ...st, checkedAt: nowIso() };
+  },
+});
+
+server.addHandler({
+  name: "purge-seed",
+  description: "Remove the seed rows left by the CSV table import.",
+  parameters: {},
+  execute: async () => {
+    const conn = db();
+    let n = 0;
+    for (const t of ["integration_sources", "integration_destinations", "vendor_aliases"]) {
+      const { rows } = conn.query(`delete from ${t} where id = 'seed' returning id`);
+      n += rows.length;
+    }
+    return { ok: true, deleted: n };
+  },
+});
+
+server.execute();
+

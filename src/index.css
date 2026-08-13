@@ -2937,3 +2937,15 @@ textarea {
     justify-content: center;
   }
 }
+
+/* ── Sources (integrations) config row ────────────────────────────────────── */
+.bi-source-config {
+  display: grid;
+  gap: var(--spacing-containerLarge);
+  padding: var(--spacing-containerLarge) 0;
+}
+.bi-source-config__text {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
