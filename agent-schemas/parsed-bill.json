@@ -1,0 +1,138 @@
+{
+  "title": "ParsedBill",
+  "type": "object",
+  "description": "Fields extracted from a single utility or vendor bill document. Any field that is not printed on the document is omitted entirely rather than guessed.",
+  "properties": {
+    "vendor_name": {
+      "type": "string",
+      "description": "The company issuing the bill, as printed. Omit if not shown."
+    },
+    "account_number": {
+      "type": "string",
+      "description": "Customer or account number, digits and separators exactly as printed. Omit if not shown."
+    },
+    "invoice_number": {
+      "type": "string",
+      "description": "Invoice, bill or statement number. Omit if not shown."
+    },
+    "service_address": {
+      "type": "string",
+      "description": "The address the service was supplied to, on one line. Omit if not shown."
+    },
+    "utility_type": {
+      "type": "string",
+      "enum": ["electricity", "water", "gas", "waste", "telecom", "other"],
+      "description": "What is being billed. Use 'other' for a vendor invoice rather than a utility."
+    },
+    "billing_period_start": {
+      "type": "string",
+      "description": "First day of the billing period, strictly YYYY-MM-DD. Omit if not printed or ambiguous."
+    },
+    "billing_period_end": {
+      "type": "string",
+      "description": "Last day of the billing period, strictly YYYY-MM-DD. Omit if not printed or ambiguous."
+    },
+    "statement_date": {
+      "type": "string",
+      "description": "Date the bill was issued, strictly YYYY-MM-DD. Omit if not printed or ambiguous."
+    },
+    "due_date": {
+      "type": "string",
+      "description": "Payment due date, strictly YYYY-MM-DD. Omit if not printed or ambiguous."
+    },
+    "meter_number": {
+      "type": "string",
+      "description": "Meter or serial identifier. Omit if the bill shows none."
+    },
+    "previous_read": {
+      "type": "number",
+      "description": "Previous meter reading as a plain number, no units or separators."
+    },
+    "current_read": {
+      "type": "number",
+      "description": "Current meter reading as a plain number, no units or separators."
+    },
+    "consumption": {
+      "type": "number",
+      "description": "Quantity consumed over the period as a plain number."
+    },
+    "consumption_unit": {
+      "type": "string",
+      "description": "Unit for the consumption figure, e.g. kWh, m3, kL, GJ, therms."
+    },
+    "currency": {
+      "type": "string",
+      "description": "Three-letter ISO currency code, e.g. USD, AUD, GBP, AED, INR."
+    },
+    "subtotal": {
+      "type": "number",
+      "description": "Amount before tax as a plain number, no currency symbol or thousands separators."
+    },
+    "tax": {
+      "type": "number",
+      "description": "Total tax, VAT or GST as a plain number."
+    },
+    "total_amount": {
+      "type": "number",
+      "description": "Total amount payable for this bill as a plain number. The single most important field."
+    },
+    "line_items": {
+      "type": "array",
+      "description": "Individual charges listed on the bill. Empty array if none are itemised.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "What the charge is for, as printed."
+          },
+          "quantity": {
+            "type": "number",
+            "description": "Quantity for this line, as a plain number."
+          },
+          "unit_price": {
+            "type": "number",
+            "description": "Price per unit for this line, as a plain number."
+          },
+          "amount": {
+            "type": "number",
+            "description": "Line total, as a plain number."
+          }
+        },
+        "required": ["description"]
+      }
+    },
+    "provenance": {
+      "type": "array",
+      "description": "For each field you filled in, the verbatim text from the document that you read the value from. This is shown to a human next to the document so they can check your work. Include one entry per non-empty field, using the exact field name from this schema.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "description": "The schema field name this evidence supports, e.g. total_amount, billing_period_start."
+          },
+          "source_text": {
+            "type": "string",
+            "description": "The exact line or phrase as printed on the document, copied verbatim, that the value came from. Keep it short — one line is ideal."
+          },
+          "page": {
+            "type": "number",
+            "description": "1-based page number the text appeared on, if the document has pages."
+          }
+        },
+        "required": ["field", "source_text"]
+      }
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "Confidence that the document was read correctly overall. Use 'low' when it is blurry, cropped, handwritten, or not clearly a bill."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Short note for the human reviewer: anything unreadable, ambiguous, or worth double-checking. Omit if the read was clean."
+    }
+  },
+  "required": ["confidence", "line_items"]
+}

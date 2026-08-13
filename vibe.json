@@ -1,0 +1,7 @@
+{
+  "name": "Bill Parser",
+  "app": "gbu-bill-parser",
+  "build": {
+    "publish": "dist"
+  }
+}

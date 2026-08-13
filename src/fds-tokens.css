@@ -1,0 +1,228 @@
+/* === Facilio Flux Design System — alias tokens ===
+ *
+ * A Vibe app is a standalone static site, so it has no FDS runtime injecting
+ * these for us — they're declared here once. This is a curated subset of the
+ * alias layer covering the surfaces, text, borders, semantics and scales this
+ * app actually uses. Every var(--…) referenced anywhere in the app resolves here.
+ *
+ * Rule: components reference ONLY these aliases — never a raw hex, never a
+ * global ramp value. Dark theme re-points the same names, so component CSS is
+ * untouched by theming.
+ */
+
+:root {
+  /* surfaces */
+  --colors-backgroundCanvas: #ffffff;
+  --colors-backgroundContainer: #ffffff;
+  --colors-backgroundContainerHalftone: #ffffff7f;
+  --colors-backgroundMidgroundSubtle: #fafafa;
+  --colors-backgroundMidgroundMedium: #f5f5f5;
+  --colors-backgroundMidgroundDark: #eae9e9;
+  --colors-backgroundBlanket: #192432b2;
+  --colors-backgroundFrostHigh: #fafafacc;
+  --colors-backgroundSelection: #f3f7ff;
+
+  /* primary */
+  --colors-backgroundPrimaryDefault: #0024d6;
+  --colors-backgroundPrimaryHovered: #2e65ff;
+  --colors-backgroundPrimaryPressed: #001dae;
+
+  /* semantic surfaces */
+  --colors-backgroundSemanticGreenSubtle: #f1fff0;
+  --colors-backgroundSemanticGreenLight: #cbf3c7;
+  --colors-backgroundSemanticGreenMedium: #49b83f;
+  --colors-backgroundSemanticOrangeSubtle: #fff6f0;
+  --colors-backgroundSemanticOrangeMedium: #ff6700;
+  --colors-backgroundSemanticRedSubtler: #fff2f2;
+  --colors-backgroundSemanticRedMedium: #b61919;
+
+  /* frost-low — the navigation bar surface in the Figma design */
+  --colors-backgroundFrost: #ffffff66;
+
+  /* accents — ambient light behind frost */
+  --colors-backgroundAccentBlueSubtle: #f3f7ff;
+  --colors-backgroundAccentVioletSubtle: #f3f0ff;
+  --colors-backgroundAccentCyanSubtle: #f0feff;
+  --colors-backgroundAccentPurpleMedium: #a160b7;
+
+  /* neutral fills */
+  --colors-backgroundNeutralDefault: #f5f5f5;
+  --colors-backgroundNeutralHovered: #eae9e9;
+  --colors-backgroundNeutralPressed: #dbdbdb;
+
+  /* borders */
+  --colors-borderNeutralBaseSubtler: #eae9e9;
+  --colors-borderNeutralBaseSubtle: #dbdbdb;
+  --colors-borderNeutralBaseLight: #a8aaaa;
+  --colors-borderPrimaryDefault: #0024d6;
+  --colors-borderPrimaryFocused: #0024d6;
+  --colors-borderSemanticGreenLight: #cbf3c7;
+  --colors-borderSemanticGreenMedium: #49b83f;
+  --colors-borderSemanticOrangeMedium: #ff6700;
+  --colors-borderSemanticRedMedium: #b61919;
+
+  /* text */
+  --colors-textMain: #283648;
+  --colors-textDescription: #384a62;
+  --colors-textCaption: #607796;
+  --colors-textInverseMain: #edf5ff;
+  --colors-textSemanticGreen: #29a01e;
+  --colors-textSemanticOrange: #d85903;
+  --colors-textSemanticRed: #b61919;
+  --colors-textPrimaryDefault: #0024d6;
+  --colors-textPrimaryHovered: #2e65ff;
+
+  /* icons */
+  --colors-iconNeutralMain: #283648;
+  --colors-iconNeutralMedium: #384a62;
+  --colors-iconNeutralLight: #7b91b0;
+  --colors-iconNeutralSubtle: #d8e3f1;
+  --colors-iconPrimaryDefault: #0024d6;
+  --colors-iconSemanticGreen: #73d06a;
+  --colors-iconSemanticOrange: #ff6700;
+  --colors-iconSemanticRed: #b61919;
+
+  /* data-viz / tag scope — holds contrast on any surface */
+  --colors-widgetAccentBlueMedium: #5989ff;
+  --colors-widgetAccentCyanMedium: #34c0ce;
+  --colors-widgetAccentVioletMedium: #7d63dc;
+  --colors-widgetAccentYellowMedium: #e2bc00;
+  --colors-widgetGreyMedium: #9cafca;
+
+  /* spacing */
+  --spacing-containerNone: 0px;
+  --spacing-containerSmall: 2px;
+  --spacing-containerMedium: 4px;
+  --spacing-containerLarge: 8px;
+  --spacing-containerXLarge: 12px;
+  --spacing-containerXxLarge: 16px;
+  --spacing-sectionXSmall: 16px;
+  --spacing-sectionSmall: 24px;
+  --spacing-sectionMedium: 32px;
+  --spacing-sectionLarge: 40px;
+
+  /* border radius */
+  --border-none: 0px;
+  --border-low: 2px;
+  --border-medium: 4px;
+  --border-high: 8px;
+  --border-large: 12px;
+  --border-xlarge: 16px;
+  --border-full: 40px;
+
+  /* elevation — modal-class overlays, plus the raised nav pill the design specifies */
+  --elevation-lightLow01: 0px 1px 2px 0px rgba(5, 16, 30, 0.05);
+  --elevation-lightMed: 0px 0px 2px 0px rgba(5, 16, 30, 0.05),
+    0px 8px 8px 0px rgba(5, 16, 30, 0.08);
+  --elevation-lightHigh: 0px 12px 32px 0px rgba(5, 16, 30, 0.10),
+    0px 2px 8px 0px rgba(5, 16, 30, 0.05);
+
+  /* typography */
+  --typography-headingMed32-fontSize: 32px;
+  --typography-headingMed32-fontWeight: 500;
+  --typography-headingMed20-fontSize: 20px;
+  --typography-headingMed20-fontWeight: 500;
+  --typography-headingMed16-fontSize: 16px;
+  --typography-headingMed16-fontWeight: 500;
+  --typography-headingMed14-fontSize: 14px;
+  --typography-headingMed14-fontWeight: 500;
+  --typography-bodyReg14-fontSize: 14px;
+  --typography-bodyReg14-fontWeight: 400;
+  --typography-captionMed12-fontSize: 12px;
+  --typography-captionMed12-fontWeight: 500;
+  --typography-captionReg12-fontSize: 12px;
+  --typography-captionReg12-fontWeight: 400;
+  --typography-captionMed10-fontSize: 10px;
+  --typography-captionMed10-fontWeight: 500;
+  --typography-fontFamily: Roboto, "SF Pro Display", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif;
+
+  /*
+   * Display family for heading titles — the face used in the Figma design,
+   * in Medium Italic. It resolves from the viewer's installed fonts; anyone
+   * without it falls back to the FDS display serif. See the note in index.css
+   * about why the trial file is not bundled.
+   */
+  --typography-displayFamily: "Reckless Condensed XL-TRIAL",
+    "Reckless Condensed XL", Reckless, "Roboto Serif", Georgia,
+    "Times New Roman", serif;
+  --typography-displayWeight: 500;
+  --typography-displayStyle: italic;
+}
+
+/* === DARK — redefines only the theme-variant names (colors + elevation). === */
+[data-theme="dark"] {
+  --colors-backgroundCanvas: #192432;
+  --colors-backgroundContainer: #192432;
+  --colors-backgroundContainerHalftone: #192432b2;
+  --colors-backgroundMidgroundSubtle: #283648;
+  --colors-backgroundMidgroundMedium: #384a62;
+  --colors-backgroundMidgroundDark: #607796;
+  --colors-backgroundBlanket: #192432b2;
+  --colors-backgroundFrostHigh: #283648b2;
+  --colors-backgroundSelection: #384a62;
+
+  --colors-backgroundPrimaryDefault: #2e65ff;
+  --colors-backgroundPrimaryHovered: #5989ff;
+  --colors-backgroundPrimaryPressed: #0024d6;
+
+  --colors-backgroundFrost: #1924324c;
+
+  --colors-backgroundSemanticGreenSubtle: #cbf3c7;
+  --colors-backgroundSemanticGreenLight: #a7e7a1;
+  --colors-backgroundSemanticGreenMedium: #29a01e;
+  --colors-backgroundSemanticOrangeSubtle: #fad0b4;
+  --colors-backgroundSemanticOrangeMedium: #d85903;
+  --colors-backgroundSemanticRedSubtler: #f7cccc;
+  --colors-backgroundSemanticRedMedium: #870000;
+
+  --colors-backgroundAccentBlueSubtle: #dbe9ff;
+  --colors-backgroundAccentVioletSubtle: #ddd5fa;
+  --colors-backgroundAccentCyanSubtle: #c6f4f8;
+  --colors-backgroundAccentPurpleMedium: #88439f;
+
+  --colors-backgroundNeutralDefault: #283648;
+  --colors-backgroundNeutralHovered: #384a62;
+  --colors-backgroundNeutralPressed: #607796;
+
+  --colors-borderNeutralBaseSubtler: #384a62;
+  --colors-borderNeutralBaseSubtle: #607796;
+  --colors-borderNeutralBaseLight: #7b91b0;
+  --colors-borderPrimaryDefault: #2e65ff;
+  --colors-borderPrimaryFocused: #2e65ff;
+  --colors-borderSemanticGreenLight: #a7e7a1;
+  --colors-borderSemanticGreenMedium: #29a01e;
+  --colors-borderSemanticOrangeMedium: #d85903;
+  --colors-borderSemanticRedMedium: #870000;
+
+  --colors-textMain: #edf5ff;
+  --colors-textDescription: #d8e3f1;
+  --colors-textCaption: #7b91b0;
+  --colors-textInverseMain: #283648;
+  --colors-textSemanticGreen: #49b83f;
+  --colors-textSemanticOrange: #ff6700;
+  --colors-textSemanticRed: #c93d3d;
+  --colors-textPrimaryDefault: #5989ff;
+  --colors-textPrimaryHovered: #2e65ff;
+
+  --colors-iconNeutralMain: #edf5ff;
+  --colors-iconNeutralMedium: #d8e3f1;
+  --colors-iconNeutralLight: #9cafca;
+  --colors-iconNeutralSubtle: #384a62;
+  --colors-iconPrimaryDefault: #2e65ff;
+  --colors-iconSemanticGreen: #49b83f;
+  --colors-iconSemanticOrange: #fd8635;
+  --colors-iconSemanticRed: #c93d3d;
+
+  --colors-widgetAccentBlueMedium: #5989ff;
+  --colors-widgetAccentCyanMedium: #168f9b;
+  --colors-widgetAccentVioletMedium: #5e3ed3;
+  --colors-widgetAccentYellowMedium: #e2bc00;
+  --colors-widgetGreyMedium: #607796;
+
+  --elevation-lightLow01: 0px 1px 2px 0px rgba(0, 0, 0, 0.30);
+  --elevation-lightMed: 0px 0px 2px 0px rgba(0, 0, 0, 0.28),
+    0px 8px 8px 0px rgba(0, 0, 0, 0.34);
+  --elevation-lightHigh: 0px 12px 32px 0px rgba(0, 0, 0, 0.40),
+    0px 2px 8px 0px rgba(0, 0, 0, 0.28);
+}
