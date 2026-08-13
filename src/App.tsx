@@ -13,28 +13,15 @@ import {
 } from './lib/api';
 import { downloadCsv } from './lib/csv';
 import type { ExtractedBill, Provenance, SavedBill } from './types';
-import { AppHeader, type Screen, type SyncState } from './components/AppHeader';
+import type { SyncState } from './components/AppHeader';
+import { Sidebar, NAV_TITLE, type NavKey } from './components/Sidebar';
+import { Topbar } from './components/Topbar';
+import { Placeholder } from './components/Placeholder';
 import { InboxScreen, type InboxItem } from './components/InboxScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
 
 type Theme = 'light' | 'dark';
-
-/**
- * The 24×24 grid every screen sits on. The shimmer layers are the same strokes at
- * a higher opacity, revealed through a drifting mask, so the lines themselves
- * brighten rather than a coloured wash moving behind them. Decorative only.
- */
-function PageGrid() {
-  return (
-    <div className="app-grid" aria-hidden="true">
-      <div className="app-grid__lines" />
-      <div className="app-grid__shimmer app-grid__shimmer--a" />
-      <div className="app-grid__shimmer app-grid__shimmer--b" />
-      <div className="app-grid__shimmer app-grid__shimmer--c" />
-    </div>
-  );
-}
 
 function initialTheme(): Theme {
   const stored = localStorage.getItem('billparser.theme');
@@ -44,7 +31,7 @@ function initialTheme(): Theme {
 
 export default function App() {
   const [theme, setTheme] = useState<Theme>(initialTheme);
-  const [screen, setScreen] = useState<Screen>('inbox');
+  const [nav, setNav] = useState<NavKey>('inbox');
 
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
@@ -52,6 +39,7 @@ export default function App() {
   const [bills, setBills] = useState<SavedBill[]>([]);
   const [stats, setStats] = useState<BillStats | null>(null);
   const [search, setSearch] = useState('');
+  const [inboxSearch, setInboxSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -107,8 +95,6 @@ export default function App() {
       setStats(s);
       setSyncState('live');
     } catch (err) {
-      // Local dev has no backend, so a failure there is expected, not an error
-      // worth shouting about on screen.
       if (import.meta.env.DEV) {
         setSyncState('off');
       } else {
@@ -191,21 +177,27 @@ export default function App() {
 
   const notificationCount = stats?.flagged ?? 0;
 
+  // ── unauthenticated gate ────────────────────────────────────────────────────
   if (authChecked && !user) {
     return (
-      <div className="app">
-        <PageGrid />
-        <main className="app__main">
-          <div className="fds-widget">
-            <div className="fds-widget__header">
-              <span className="fds-widget__title">Billson</span>
-            </div>
-            <div className="fds-widget__body">
-              <div className="empty">
-                <div className="empty__text">Sign in to read and save bills.</div>
-                <button type="button" className="btn btn--primary" onClick={() => vibe.login()}>
-                  Sign in
-                </button>
+      <div className="bi-shell" style={{ gridTemplateColumns: '1fr' }}>
+        <main className="bi-main">
+          <div className="bi-page" style={{ alignItems: 'center', justifyContent: 'center' }}>
+            <div className="fds-widget" style={{ maxWidth: 420, width: '100%' }}>
+              <div className="fds-widget__header">
+                <span className="fds-widget__title">Facilio · Bill Intelligence</span>
+              </div>
+              <div className="fds-widget__body">
+                <div className="empty">
+                  <div className="empty__text">Sign in to read and save bills.</div>
+                  <button
+                    type="button"
+                    className="btn btn--accent"
+                    onClick={() => vibe.login()}
+                  >
+                    Sign in
+                  </button>
+                </div>
               </div>
             </div>
           </div>
@@ -214,85 +206,129 @@ export default function App() {
     );
   }
 
-  // The 3-column workspaces need the full width; the list pages read better narrow.
-  const wide = screen === 'review' || screen === 'inbox';
+  const onNotifications = () =>
+    setToast(
+      notificationCount > 0
+        ? `${notificationCount} bill(s) need attention — open the Review Queue to resolve them.`
+        : 'No notifications. Low-confidence parses and source failures will appear here.',
+    );
+
+  const onProfile = () =>
+    setToast(
+      user?.email
+        ? `Signed in as ${user.email}. Profile and role management aren't built yet.`
+        : 'Not signed in.',
+    );
 
   return (
-    <div className="app">
-      <PageGrid />
-      <AppHeader
-        screen={screen}
-        onScreen={setScreen}
+    <div className="bi-shell">
+      <Sidebar
+        active={nav}
+        onNavigate={setNav}
         badges={badges}
-        syncState={syncState}
-        syncLabel={syncLabel}
-        notificationCount={notificationCount}
-        onNotifications={() =>
-          setToast(
-            notificationCount > 0
-              ? `${notificationCount} bill(s) need attention — open Review to resolve them.`
-              : 'No notifications. Low-confidence parses and source failures will appear here.',
-          )
-        }
-        user={user}
-        onProfile={() =>
-          setToast(
-            user?.email
-              ? `Signed in as ${user.email}. Profile and role management aren't built yet.`
-              : 'Not signed in.',
-          )
-        }
         theme={theme}
         onTheme={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
       />
 
-      <main className={`app__main${wide ? ' app__main--wide' : ''}`}>
-        {listError && (
-          <div className="notice notice--error" role="alert">
-            <span>{listError}</span>
-          </div>
-        )}
+      <main className="bi-main">
+        <Topbar
+          title={NAV_TITLE[nav]}
+          search={nav === 'inbox' ? inboxSearch : undefined}
+          onSearch={nav === 'inbox' ? setInboxSearch : undefined}
+          searchPlaceholder="Search bills, providers…"
+          syncState={syncState}
+          syncLabel={syncLabel}
+          notificationCount={notificationCount}
+          onNotifications={onNotifications}
+          user={user}
+          onProfile={onProfile}
+        />
 
-        {screen === 'inbox' && (
-          <InboxScreen
-            items={inboxItems}
-            setItems={setInboxItems}
-            onParsed={(savedId, provenance) => {
-              if (provenance.length > 0) {
-                setProvenanceById((m) => ({ ...m, [savedId]: provenance }));
+        <div className="bi-page">
+          {listError && (
+            <div className="notice notice--error" role="alert">
+              <span>{listError}</span>
+            </div>
+          )}
+
+          {nav === 'inbox' && (
+            <InboxScreen
+              items={inboxItems}
+              setItems={setInboxItems}
+              search={inboxSearch}
+              onParsed={(savedId, provenance) => {
+                if (provenance.length > 0) {
+                  setProvenanceById((m) => ({ ...m, [savedId]: provenance }));
+                }
+                void refresh(search);
+              }}
+              onReviewAll={() => setNav('review')}
+              reviewer={user?.email ?? null}
+            />
+          )}
+
+          {nav === 'review' && (
+            <ReviewScreen
+              bills={bills}
+              provenanceById={provenanceById}
+              loading={loading}
+              search={search}
+              onSearch={setSearch}
+              onSave={handleSave}
+              onDelete={(b) => void handleDelete(b)}
+              onExport={() =>
+                downloadCsv(bills, `bills-${new Date().toISOString().slice(0, 10)}.csv`)
               }
-              void refresh(search);
-            }}
-            onReviewAll={() => setScreen('review')}
-            reviewer={user?.email ?? null}
-          />
-        )}
+              onRefresh={() => void refresh(search)}
+              busyId={busyId}
+            />
+          )}
 
-        {screen === 'review' && (
-          <ReviewScreen
-            bills={bills}
-            provenanceById={provenanceById}
-            loading={loading}
-            search={search}
-            onSearch={setSearch}
-            onSave={handleSave}
-            onDelete={(b) => void handleDelete(b)}
-            onExport={() =>
-              downloadCsv(bills, `bills-${new Date().toISOString().slice(0, 10)}.csv`)
-            }
-            onRefresh={() => void refresh(search)}
-            busyId={busyId}
-          />
-        )}
+          {nav === 'dashboard' && (
+            <StatsScreen
+              stats={stats}
+              bills={bills}
+              onGoToParse={() => setNav('inbox')}
+              onGoToInbox={() => setNav('review')}
+            />
+          )}
 
-        {screen === 'stats' && (
-          <StatsScreen
-            stats={stats}
-            bills={bills}
-            onGoToParse={() => setScreen('inbox')}
-            onGoToInbox={() => setScreen('review')}
-          />
-        )}
+          {nav === 'reports' && (
+            <Placeholder
+              icon="reports"
+              title="Reports"
+              blurb="Scheduled exports and spend reports will live here. Cost analytics are on the Home dashboard for now."
+            />
+          )}
+          {nav === 'templates' && (
+            <Placeholder
+              icon="templates"
+              title="Templates"
+              blurb="Per-vendor extraction templates that lock field positions for known bill layouts. Not built yet — every bill is read by the AI extractor today."
+            />
+          )}
+          {nav === 'clients' && (
+            <Placeholder
+              icon="clients"
+              title="Clients & Providers"
+              blurb="A directory of clients and utility providers to attribute each bill to. Not modelled yet — bills carry the parsed provider name only."
+            />
+          )}
+          {nav === 'sources' && (
+            <Placeholder
+              icon="sources"
+              title="Sources"
+              blurb="Connect Google Drive, SharePoint and mail rules so bills are fetched automatically. Manual upload and product fetch are live today."
+            />
+          )}
+          {nav === 'settings' && (
+            <Placeholder
+              icon="settings"
+              title="Settings"
+              blurb="Org preferences, extraction defaults and roles will live here."
+            />
+          )}
+        </div>
       </main>
 
       {toast && (

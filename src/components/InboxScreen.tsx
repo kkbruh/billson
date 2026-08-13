@@ -7,22 +7,11 @@ import {
   type Dispatch,
   type SetStateAction,
 } from 'react';
-import pdfIcon from '../assets/icons/file-pdf.svg';
-import refreshIcon from '../assets/icons/action-refresh.svg';
-import uploadIcon from '../assets/icons/action-upload.svg';
-import trashIcon from '../assets/icons/action-trash.svg';
-import sparkIcon from '../assets/icons/action-spark.svg';
-
-/** Quoted so the inlined data: URI stays valid inside CSS url(). */
-function mask(icon: string) {
-  return { maskImage: `url("${icon}")`, WebkitMaskImage: `url("${icon}")` };
-}
+import { icons, type IconName } from '../lib/icons';
 import { ExtractionUnavailableError, errorMessage, parseBillFile, saveBill } from '../lib/api';
 import { fetchProductBills, humanSize } from '../lib/productBills';
-import { FIELDS, displayValue, hasValue } from '../lib/fields';
 import type { ExtractedBill, Provenance } from '../types';
-import { StatusIcon, STATUS_LABEL, type FileStatus } from './StatusIcon';
-import { DocViewer } from './DocViewer';
+import type { FileStatus } from './StatusIcon';
 
 /** A bill waiting in the Inbox — pulled from the product, or uploaded by hand. */
 export interface InboxItem {
@@ -46,11 +35,14 @@ interface Props {
   onParsed: (savedId: string, provenance: Provenance[]) => void;
   onReviewAll: () => void;
   reviewer: string | null;
+  /** Search term, owned by the top bar. */
+  search: string;
 }
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.heic,.tif,.tiff,.txt';
 const MAX_BYTES = 20 * 1024 * 1024;
 const ALLOWED_EXT = /\.(pdf|png|jpe?g|webp|heic|tiff?|txt)$/i;
+const PAGE_SIZE = 8;
 
 function validate(file: File, existing: InboxItem[]): string | null {
   if (!ALLOWED_EXT.test(file.name)) return 'Unsupported file type — PDF or image only.';
@@ -66,54 +58,86 @@ function makeKey(name: string, size: number) {
   return `${name}-${size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer }: Props) {
-  const [dragOver, setDragOver] = useState(false);
+function relative(ts: number): string {
+  const secs = Math.round((Date.now() - ts) / 1000);
+  if (secs < 60) return 'just now';
+  if (secs < 3600) return `${Math.round(secs / 60)} mins ago`;
+  if (secs < 86400) {
+    const h = Math.round(secs / 3600);
+    return `${h} hour${h === 1 ? '' : 's'} ago`;
+  }
+  const d = Math.round(secs / 86400);
+  return `${d} day${d === 1 ? '' : 's'} ago`;
+}
+
+function mask(icon: string) {
+  return { maskImage: `url("${icon}")`, WebkitMaskImage: `url("${icon}")` };
+}
+
+/** Map a free-form origin string to a source icon + short label. */
+function sourceOf(origin: string): { label: string; icon: IconName } {
+  const o = origin.toLowerCase();
+  if (o.includes('drive')) return { label: 'Drive', icon: 'drive' };
+  if (o.includes('sharepoint')) return { label: 'SharePoint', icon: 'sharepoint' };
+  if (o.includes('manual')) return { label: 'Manual', icon: 'manual' };
+  if (o.includes('email') || o.includes('mail')) return { label: 'Mail rule', icon: 'mail' };
+  return { label: 'Product', icon: 'mail' };
+}
+
+/** STATUS column pill. */
+function statusTag(status: FileStatus | null): {
+  label: string;
+  cls: string;
+  spinner?: boolean;
+} {
+  switch (status) {
+    case 'queued':
+      return { label: 'Queued', cls: 'bi-tag--blue' };
+    case 'parsing':
+      return { label: 'Parsing', cls: 'bi-tag--orange', spinner: true };
+    case 'done':
+      return { label: 'Validated', cls: 'bi-tag--green' };
+    case 'attention':
+      return { label: 'Needs attention', cls: 'bi-tag--red' };
+    case 'failed':
+      return { label: 'Failed', cls: 'bi-tag--red' };
+    default:
+      return { label: 'Awaiting review', cls: 'bi-tag--amber' };
+  }
+}
+
+/** Which items count as "still needs a human to kick off / recover". */
+function isPending(i: InboxItem): boolean {
+  return i.status === null || i.status === 'failed';
+}
+
+export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer, search }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [fetching, setFetching] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(0);
+  const [justParsed, setJustParsed] = useState(0);
 
-  /** Null = list mode; an array of keys = the 2-partition parsing view. */
-  const [runKeys, setRunKeys] = useState<string[] | null>(null);
-  const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  const [runDone, setRunDone] = useState(false);
-
-  /** Set when a single bill is parsed in the overlay modal. */
-  const [modalKey, setModalKey] = useState<string | null>(null);
-
-  // Object URLs for previews, created on demand and revoked on unmount.
-  const previews = useRef(new Map<string, { url: string; type: string }>());
-  useEffect(
-    () => () => {
-      previews.current.forEach((p) => URL.revokeObjectURL(p.url));
-      previews.current.clear();
-    },
-    [],
+  // filters
+  const [view, setView] = useState<'review' | 'all'>('all');
+  const [source, setSource] = useState('all');
+  const [provider, setProvider] = useState('all');
+  const [state, setState] = useState<'all' | 'awaiting' | 'parsing' | 'validated' | 'attention'>(
+    'all',
   );
+  const [fetchedWindow, setFetchedWindow] = useState<'7' | '30' | '90' | 'all'>('30');
 
-  const previewFor = useCallback((item: InboxItem) => {
-    const cached = previews.current.get(item.key);
-    if (cached) return cached;
-    const type =
-      item.file.type ||
-      (/\.pdf$/i.test(item.name)
-        ? 'application/pdf'
-        : /\.txt$/i.test(item.name)
-          ? 'text/plain'
-          : 'image/*');
-    const entry = { url: URL.createObjectURL(item.file), type };
-    previews.current.set(item.key, entry);
-    return entry;
-  }, []);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const selectAllRef = useRef<HTMLInputElement>(null);
 
   const patch = (key: string, update: Partial<InboxItem>) =>
     setItems((rows) => rows.map((r) => (r.key === key ? { ...r, ...update } : r)));
 
   const add = (files: FileList | File[], origin = 'Manual upload') => {
-    // Snapshot eagerly: a FileList is live and the updater runs after this returns.
     const incoming = Array.from(files);
     if (incoming.length === 0) return;
     setError(null);
-
     setItems((rows) => {
       const next = [...rows];
       const rejected: string[] = [];
@@ -182,7 +206,7 @@ export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer }
     }
   };
 
-  /** Extract one bill and write it to the register. Shared by every entry point. */
+  /** Extract one bill and write it to the register. */
   const parseOne = useCallback(
     async (key: string, file: File, name: string) => {
       patch(key, { status: 'parsing', reason: null });
@@ -207,6 +231,7 @@ export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer }
           reason: attention ? (bill.notes ?? 'Low confidence — check the values.') : null,
         });
         onParsed(saved.id, bill.provenance);
+        return true;
       } catch (err) {
         const unavailable = err instanceof ExtractionUnavailableError;
         patch(key, {
@@ -215,87 +240,112 @@ export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer }
             ? 'Automatic extraction is unavailable in this org.'
             : errorMessage(err),
         });
+        return false;
       }
     },
     [onParsed, reviewer],
   );
 
-  /** Parse a set of bills one at a time, in the 2-partition view. */
-  const startRun = async (keys: string[]) => {
-    if (keys.length === 0) return;
-    setRunKeys(keys);
-    setRunDone(false);
-    setItems((rows) =>
-      rows.map((r) => (keys.includes(r.key) ? { ...r, status: 'queued', reason: null } : r)),
-    );
-
-    const snapshot = items;
-    for (const key of keys) {
-      const row = snapshot.find((i) => i.key === key);
-      if (!row) continue;
-      setSelectedKey(key);
-      await parseOne(key, row.file, row.name);
-    }
-    setRunDone(true);
-  };
-
-  const retry = async (key: string) => {
-    const row = items.find((i) => i.key === key);
-    if (!row) return;
-    setSelectedKey(key);
-    await parseOne(key, row.file, row.name);
-  };
-
-  /** Parse a single bill inside the overlay modal. */
-  const parseInModal = async (key: string) => {
-    const row = items.find((i) => i.key === key);
-    if (!row) return;
-    setModalKey(key);
-    await parseOne(key, row.file, row.name);
-  };
-
-  const pending = useMemo(
-    () => items.filter((i) => i.status === null || i.status === 'failed'),
+  // ── filtering ───────────────────────────────────────────────────────────────
+  const sources = useMemo(
+    () => [...new Set(items.map((i) => sourceOf(i.origin).label))].sort(),
+    [items],
+  );
+  const providers = useMemo(
+    () =>
+      [...new Set(items.map((i) => i.bill?.vendor_name).filter((v): v is string => Boolean(v)))].sort(),
     [items],
   );
 
-  const modalItem = modalKey ? (items.find((i) => i.key === modalKey) ?? null) : null;
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const now = Date.now();
+    const windowMs =
+      fetchedWindow === 'all' ? Infinity : Number(fetchedWindow) * 24 * 60 * 60 * 1000;
+    return items.filter((i) => {
+      if (view === 'review' && !isPending(i) && i.status !== 'attention') return false;
+      if (source !== 'all' && sourceOf(i.origin).label !== source) return false;
+      if (provider !== 'all' && i.bill?.vendor_name !== provider) return false;
+      if (state !== 'all') {
+        const s = i.status;
+        if (state === 'awaiting' && s !== null) return false;
+        if (state === 'parsing' && s !== 'parsing' && s !== 'queued') return false;
+        if (state === 'validated' && s !== 'done') return false;
+        if (state === 'attention' && s !== 'attention' && s !== 'failed') return false;
+      }
+      if (now - i.addedAt > windowMs) return false;
+      if (term) {
+        const hay = `${i.name} ${i.origin} ${i.bill?.vendor_name ?? ''}`.toLowerCase();
+        if (!hay.includes(term)) return false;
+      }
+      return true;
+    });
+  }, [items, view, source, provider, state, fetchedWindow, search]);
 
-  // ── the header, shared by both modes ──────────────────────────────────────
-  const head = (parsing: boolean) => (
-    <div className="page-head">
-      <div className="page-head__text">
-        <h1 className="page-head__title">
-          {parsing ? 'Parsing in progress…' : 'Bills to parse'}
-        </h1>
-        <p className="page-head__sub">
-          {parsing
-            ? 'Bills are being parsed. Add more files to the queue.'
-            : 'Upload or fetch bills to extract and map their details to Facilio.'}
-        </p>
-      </div>
-      <div className="page-head__actions">
-        <button
-          type="button"
-          className="icon-btn icon-btn--subtle"
-          onClick={() => void fetchFromProduct()}
-          disabled={fetching}
-          aria-label="Fetch bills from the product"
-          title="Fetch bills from the product"
-        >
-          {fetching ? (
-            <span className="btn__spinner" aria-hidden="true" />
-          ) : (
-            <span className="icon-btn__glyph" style={mask(refreshIcon)} aria-hidden="true" />
-          )}
-        </button>
-        <button type="button" className="btn" onClick={() => fileInput.current?.click()}>
-          <span className="btn__icon" style={mask(uploadIcon)} aria-hidden="true" />
-          Upload
-        </button>
-      </div>
-    </div>
-  );
+  // Reset to the first page whenever the result set changes shape.
+  useEffect(() => {
+    setPage(0);
+  }, [view, source, provider, state, fetchedWindow, search]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const clampedPage = Math.min(page, pageCount - 1);
+  const start = clampedPage * PAGE_SIZE;
+  const visible = filtered.slice(start, start + PAGE_SIZE);
+
+  // Header checkbox reflects selection state over the *filtered* set.
+  const selectableKeys = useMemo(() => filtered.map((i) => i.key), [filtered]);
+  const selectedInView = selectableKeys.filter((k) => selected.has(k)).length;
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate =
+        selectedInView > 0 && selectedInView < selectableKeys.length;
+    }
+  }, [selectedInView, selectableKeys.length]);
+
+  const toggle = (key: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelected((prev) => {
+      const allSelected = selectableKeys.every((k) => prev.has(k));
+      return allSelected ? new Set() : new Set(selectableKeys);
+    });
+
+  // ── bulk parse ────────────────────────────────────────────────────────────
+  const [busy, setBusy] = useState(false);
+  const approveAndParse = async () => {
+    // Selected & pending first; if nothing is selected, parse every pending row
+    // in the current filter.
+    const chosen = selected.size > 0 ? filtered.filter((i) => selected.has(i.key)) : filtered;
+    const targets = chosen.filter(isPending);
+    if (targets.length === 0) return;
+    setBusy(true);
+    setJustParsed(0);
+    setItems((rows) =>
+      rows.map((r) =>
+        targets.some((t) => t.key === r.key) ? { ...r, status: 'queued', reason: null } : r,
+      ),
+    );
+    let ok = 0;
+    for (const t of targets) {
+      const success = await parseOne(t.key, t.file, t.name);
+      if (success) ok += 1;
+    }
+    setBusy(false);
+    setJustParsed(ok);
+    setSelected(new Set());
+  };
+
+  const pendingCount = filtered.filter(isPending).length;
+  const parseLabel =
+    selected.size > 0
+      ? `Approve & parse (${filtered.filter((i) => selected.has(i.key) && isPending(i)).length})`
+      : `Approve & parse${pendingCount > 0 ? ` (${pendingCount})` : ''}`;
 
   const hiddenInput = (
     <input
@@ -311,342 +361,298 @@ export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer }
     />
   );
 
-  // ── 2-partition parsing view ──────────────────────────────────────────────
-  if (runKeys) {
-    const runItems = runKeys
-      .map((k) => items.find((i) => i.key === k))
-      .filter((i): i is InboxItem => Boolean(i));
-
-    const completed = runItems.filter(
-      (i) => i.status === 'done' || i.status === 'attention',
-    ).length;
-    const active = runItems.find((i) => i.status === 'parsing') ?? null;
-    const selected = runItems.find((i) => i.key === selectedKey) ?? runItems[0] ?? null;
-    const preview = selected ? previewFor(selected) : null;
-
-    return (
-      <>
-        {hiddenInput}
-        <div className="app__main-inner">
-          {head(true)}
-
-          <div className="parsing">
-            <aside className="parsing__panel">
-              <div className="parsing__panel-head">
-                <span className="parsing__count">
-                  {completed} of {runItems.length} completed
-                </span>
-                {runDone && (
-                  <button type="button" className="btn btn--primary" onClick={onReviewAll}>
-                    Review all
-                  </button>
-                )}
-              </div>
-
-              <ul className="parsing__list">
-                {runItems.map((item) => {
-                  const status = item.status ?? 'queued';
-                  return (
-                    <li key={item.key}>
-                      <button
-                        type="button"
-                        className={[
-                          'statusrow',
-                          item.key === selectedKey ? 'statusrow--active' : '',
-                          status === 'parsing' ? 'statusrow--parsing' : '',
-                        ]
-                          .filter(Boolean)
-                          .join(' ')}
-                        onClick={() => setSelectedKey(item.key)}
-                        title={item.reason ?? STATUS_LABEL[status]}
-                      >
-                        <img className="filerow__icon" src={pdfIcon} alt="" />
-                        <span className="statusrow__name">{item.name}</span>
-                        <span className="statusrow__slot">
-                          {status === 'failed' && (
-                            <button
-                              type="button"
-                              className="retry-btn"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void retry(item.key);
-                              }}
-                            >
-                              Retry
-                            </button>
-                          )}
-                          <StatusIcon status={status} />
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-
-              <div className="parsing__panel-head" style={{ borderTop: '1px solid var(--colors-borderNeutralBaseSubtler)', borderBottom: 'none' }}>
-                <button
-                  type="button"
-                  className="btn btn--ghost"
-                  onClick={() => {
-                    setRunKeys(null);
-                    setRunDone(false);
-                    setSelectedKey(null);
-                  }}
-                >
-                  Back to Inbox
-                </button>
-              </div>
-            </aside>
-
-            <DocViewer
-              url={preview?.url ?? null}
-              type={preview?.type ?? null}
-              name={selected?.name ?? '—'}
-              scanning={Boolean(active) && selected?.key === active?.key}
-            />
-          </div>
-        </div>
-      </>
-    );
-  }
-
-  // ── list mode ─────────────────────────────────────────────────────────────
   return (
     <>
       {hiddenInput}
-      <div className="inbox">
-        {head(false)}
 
-        {error && (
-          <div className="notice notice--error" role="alert">
-            <span>{error}</span>
-          </div>
-        )}
-
-        {items.length === 0 ? (
-          <div
-            className={`dropzone-xl${dragOver ? ' dropzone-xl--over' : ''}`}
-            role="button"
-            tabIndex={0}
-            onClick={() => fileInput.current?.click()}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                fileInput.current?.click();
-              }
-            }}
-            onDragOver={(e) => {
-              e.preventDefault();
-              setDragOver(true);
-            }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setDragOver(false);
-              if (e.dataTransfer.files?.length) add(e.dataTransfer.files);
-            }}
+      {/* ── filter / action bar ───────────────────────────────────────────── */}
+      <div className="bi-toolbar">
+        <label className="bi-select bi-select--primary">
+          <select
+            value={view}
+            aria-label="View"
+            onChange={(e) => setView(e.target.value as 'review' | 'all')}
           >
-            <span className="dropzone-xl__lead">Drop your bills here</span>
-            <span className="dropzone-xl__or">or</span>
-            <span className="btn">
-              <span className="btn__icon" style={mask(uploadIcon)} aria-hidden="true" />
-              Upload
-            </span>
-            <span className="dropzone-xl__hint">
-              or pull what the product already has, with the refresh button above
-            </span>
+            <option value="review">Needs my review</option>
+            <option value="all">All bills</option>
+          </select>
+        </label>
+
+        <label className="bi-select">
+          <select value={source} aria-label="Source" onChange={(e) => setSource(e.target.value)}>
+            <option value="all">Source: All</option>
+            {sources.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="bi-select">
+          <select value="all" aria-label="Client" disabled title="Clients aren't modelled yet">
+            <option value="all">Client: All</option>
+          </select>
+        </label>
+
+        <label className="bi-select">
+          <select
+            value={provider}
+            aria-label="Provider"
+            onChange={(e) => setProvider(e.target.value)}
+          >
+            <option value="all">Provider: All</option>
+            {providers.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="bi-select">
+          <select
+            value={state}
+            aria-label="State"
+            onChange={(e) => setState(e.target.value as typeof state)}
+          >
+            <option value="all">State: All</option>
+            <option value="awaiting">Awaiting review</option>
+            <option value="parsing">Parsing</option>
+            <option value="validated">Validated</option>
+            <option value="attention">Needs attention</option>
+          </select>
+        </label>
+
+        <label className="bi-select">
+          <select
+            value={fetchedWindow}
+            aria-label="Date fetched"
+            onChange={(e) => setFetchedWindow(e.target.value as typeof fetchedWindow)}
+          >
+            <option value="7">Date fetched: Last 7d</option>
+            <option value="30">Date fetched: Last 30d</option>
+            <option value="90">Date fetched: Last 90d</option>
+            <option value="all">Date fetched: All time</option>
+          </select>
+        </label>
+
+        <div className="bi-toolbar__end">
+          <button
+            type="button"
+            className="btn btn--ghost"
+            onClick={() => void fetchFromProduct()}
+            disabled={fetching}
+            title="Fetch bills the product already has"
+          >
+            {fetching ? <span className="btn__spinner" aria-hidden="true" /> : 'Fetch'}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={busy || pendingCount === 0}
+            onClick={() => void approveAndParse()}
+          >
+            {busy ? (
+              <span className="btn__spinner" aria-hidden="true" />
+            ) : (
+              <span className="btn__glyph" style={mask(icons.approve)} aria-hidden="true" />
+            )}
+            {parseLabel}
+          </button>
+          <button
+            type="button"
+            className="btn btn--accent"
+            onClick={() => fileInput.current?.click()}
+          >
+            <span className="btn__glyph" style={mask(icons.upload)} aria-hidden="true" />
+            Upload bills
+          </button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="notice notice--error" role="alert">
+          <span>{error}</span>
+        </div>
+      )}
+
+      {justParsed > 0 && !busy && (
+        <div className="notice" role="status">
+          <span>
+            Parsed {justParsed} bill{justParsed === 1 ? '' : 's'} into the register.
+          </span>
+          <button type="button" className="btn btn--ghost" onClick={onReviewAll}>
+            Open Review Queue
+          </button>
+        </div>
+      )}
+
+      {/* ── table ─────────────────────────────────────────────────────────── */}
+      <div
+        className={`bi-tablecard${dragOver ? ' bi-tablecard--drag' : ''}`}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => {
+          e.preventDefault();
+          setDragOver(false);
+          if (e.dataTransfer.files?.length) add(e.dataTransfer.files);
+        }}
+      >
+        {items.length === 0 ? (
+          <div className="bi-empty">
+            <div style={{ marginBottom: 'var(--spacing-containerXLarge)' }}>
+              No bills yet. Drop a PDF or photo here, upload, or fetch what the product has.
+            </div>
+            <div className="row" style={{ justifyContent: 'center' }}>
+              <button type="button" className="btn" onClick={() => void fetchFromProduct()} disabled={fetching}>
+                {fetching ? <span className="btn__spinner" aria-hidden="true" /> : 'Fetch from product'}
+              </button>
+              <button type="button" className="btn btn--accent" onClick={() => fileInput.current?.click()}>
+                <span className="btn__glyph" style={mask(icons.upload)} aria-hidden="true" />
+                Upload bills
+              </button>
+            </div>
           </div>
         ) : (
           <>
-            <ul
-              className="filelist"
-              onDragOver={(e) => {
-                e.preventDefault();
-                setDragOver(true);
-              }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => {
-                e.preventDefault();
-                setDragOver(false);
-                if (e.dataTransfer.files?.length) add(e.dataTransfer.files);
-              }}
-            >
-              {items.map((item) => (
-                <li key={item.key}>
-                  <div className="filerow">
-                    <span className="filerow__badge">
-                      <img className="filerow__icon" src={pdfIcon} alt="PDF" />
-                    </span>
-                    <div className="filerow__body">
-                      <span className="filerow__name">{item.name}</span>
-                      <span className="filerow__meta">
-                        {humanSize(item.sizeBytes)} · {item.origin}
-                      </span>
-                    </div>
-                    <div
-                      className={`filerow__actions${
-                        item.status ? ' filerow__actions--always' : ''
-                      }`}
-                    >
-                      {item.status && <StatusIcon status={item.status} />}
-                      <button
-                        type="button"
-                        className="iconbtn-sm iconbtn-sm--primary"
-                        title="Parse Individual"
-                        aria-label={`Parse ${item.name} individually`}
-                        onClick={() => void parseInModal(item.key)}
-                      >
-                        <span className="btn__icon" style={mask(sparkIcon)} aria-hidden="true" />
-                      </button>
-                      <span className="filerow__divider" />
-                      <button
-                        type="button"
-                        className="iconbtn-sm iconbtn-sm--danger"
-                        title="Remove"
-                        aria-label={`Remove ${item.name}`}
-                        onClick={() =>
-                          setItems((rows) => rows.filter((r) => r.key !== item.key))
+            <div className="bi-tablescroll">
+              <table className="bi-table">
+                <thead>
+                  <tr>
+                    <th className="bi-col-check">
+                      <input
+                        ref={selectAllRef}
+                        type="checkbox"
+                        className="bi-check"
+                        aria-label="Select all"
+                        checked={
+                          selectableKeys.length > 0 && selectedInView === selectableKeys.length
                         }
-                      >
-                        <span className="btn__icon" style={mask(trashIcon)} aria-hidden="true" />
-                      </button>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                        onChange={toggleAll}
+                      />
+                    </th>
+                    <th className="bi-col-preview">Preview</th>
+                    <th>Filename</th>
+                    <th>Source</th>
+                    <th>Client / Provider</th>
+                    <th>Fetched</th>
+                    <th>Validation</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visible.map((item) => {
+                    const src = sourceOf(item.origin);
+                    const tag = statusTag(item.status);
+                    const isSel = selected.has(item.key);
+                    const providerName = item.bill?.vendor_name ?? null;
+                    return (
+                      <tr key={item.key} className={isSel ? 'bi-row--selected' : undefined}>
+                        <td className="bi-col-check">
+                          <input
+                            type="checkbox"
+                            className="bi-check"
+                            aria-label={`Select ${item.name}`}
+                            checked={isSel}
+                            onChange={() => toggle(item.key)}
+                          />
+                        </td>
+                        <td className="bi-col-preview">
+                          <span className="bi-preview-icon" title={item.name}>
+                            <span
+                              className="bi-nav__icon"
+                              style={{ ...mask(icons.doc), width: 15, height: 15 }}
+                              aria-hidden="true"
+                            />
+                          </span>
+                        </td>
+                        <td>
+                          <div className="bi-file">
+                            <span className="bi-file__name" title={item.name}>
+                              {item.name}
+                            </span>
+                          </div>
+                        </td>
+                        <td>
+                          <span className="bi-source">
+                            <span
+                              className="bi-source__icon"
+                              style={mask(icons[src.icon])}
+                              aria-hidden="true"
+                            />
+                            {src.label}
+                          </span>
+                        </td>
+                        <td>
+                          {providerName ? (
+                            <span className="bi-cell-2">
+                              <span>{providerName}</span>
+                              <span className="bi-cell-2__sub">Provider</span>
+                            </span>
+                          ) : (
+                            <span className="bi-muted">—</span>
+                          )}
+                        </td>
+                        <td className="bi-muted">{relative(item.addedAt)}</td>
+                        <td>
+                          {item.status === 'failed' ? (
+                            <span className="bi-vtext bi-vtext--red">Failed</span>
+                          ) : (
+                            <span className="bi-vtext bi-vtext--green">Validated</span>
+                          )}
+                        </td>
+                        <td>
+                          <span className={`bi-tag ${tag.cls}`} title={item.reason ?? undefined}>
+                            {tag.spinner && <span className="bi-tag__spinner" aria-hidden="true" />}
+                            {tag.label}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {visible.length === 0 && (
+                    <tr>
+                      <td colSpan={8}>
+                        <div className="bi-empty">Nothing matches these filters.</div>
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
 
-            <div className="cta-bar">
-              <button
-                type="button"
-                className="btn btn--primary btn--block"
-                disabled={pending.length === 0}
-                onClick={() => void startRun(pending.map((i) => i.key))}
-              >
-                Parse All ({pending.length}) Bills
-              </button>
+            <div className="bi-tablefoot">
+              <span className="bi-tablefoot__count">
+                {filtered.length === 0
+                  ? 'Showing 0 of 0'
+                  : `Showing ${start + 1}–${Math.min(start + PAGE_SIZE, filtered.length)} of ${filtered.length}`}
+              </span>
+              <div className="bi-pager">
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={clampedPage === 0}
+                  onClick={() => setPage((p) => Math.max(0, p - 1))}
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  className="btn"
+                  disabled={clampedPage >= pageCount - 1}
+                  onClick={() => setPage((p) => Math.min(pageCount - 1, p + 1))}
+                >
+                  Next
+                </button>
+              </div>
             </div>
           </>
         )}
       </div>
-
-      {/* individual parse happens in an overlay */}
-      {modalItem && (
-        <ParseOverlay
-          item={modalItem}
-          preview={previewFor(modalItem)}
-          onClose={() => setModalKey(null)}
-          onReview={onReviewAll}
-          onRetry={() => void retry(modalItem.key)}
-        />
-      )}
     </>
-  );
-}
-
-// ── overlay modal for a single bill ─────────────────────────────────────────
-
-function ParseOverlay({
-  item,
-  preview,
-  onClose,
-  onReview,
-  onRetry,
-}: {
-  item: InboxItem;
-  preview: { url: string; type: string };
-  onClose: () => void;
-  onReview: () => void;
-  onRetry: () => void;
-}) {
-  // Escape closes, and focus starts inside the dialog.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
-  const status = item.status ?? 'queued';
-  const bill = item.bill;
-
-  return (
-    <div className="modal" role="dialog" aria-modal="true" aria-label={`Parsing ${item.name}`}>
-      <div className="modal__panel">
-        <div className="modal__head">
-          <img className="filerow__icon" src={pdfIcon} alt="" />
-          <span className="modal__title">{item.name}</span>
-          <span className="status">
-            <StatusIcon status={status} />
-            {STATUS_LABEL[status]}
-          </span>
-          <button type="button" className="icon-btn" aria-label="Close" onClick={onClose}>
-            ✕
-          </button>
-        </div>
-
-        <div className="modal__body">
-          <DocViewer
-            url={preview.url}
-            type={preview.type}
-            name={item.name}
-            scanning={status === 'parsing'}
-          />
-
-          <div className="modal__fields">
-            <div className="fds-section-head">
-              <span className="fds-section-head__label">Facilio fields</span>
-              <span className="fds-section-head__rule" />
-            </div>
-
-            {status === 'parsing' && (
-              <p className="muted">Reading the document…</p>
-            )}
-
-            {status === 'failed' && (
-              <div className="notice notice--error" role="alert">
-                <span>{item.reason ?? 'Extraction failed.'}</span>
-              </div>
-            )}
-
-            {bill && (
-              <>
-                {item.reason && status === 'attention' && (
-                  <div className="notice notice--warning">
-                    <span>{item.reason}</span>
-                  </div>
-                )}
-                <dl className="fieldmap">
-                  {FIELDS.filter((f) => hasValue(bill, f.key)).map((f) => (
-                    <div className="fieldmap__row" key={String(f.key)}>
-                      <dt className="fieldmap__key">{f.label}</dt>
-                      <dd className="fieldmap__val">{displayValue(bill[f.key])}</dd>
-                    </div>
-                  ))}
-                </dl>
-              </>
-            )}
-          </div>
-        </div>
-
-        <div className="modal__foot">
-          {status === 'failed' && (
-            <button type="button" className="btn" onClick={onRetry}>
-              Retry
-            </button>
-          )}
-          <span className="app__spacer" />
-          {(status === 'done' || status === 'attention') && (
-            <button type="button" className="btn btn--primary" onClick={onReview}>
-              Open in Review
-            </button>
-          )}
-          <button type="button" className="btn btn--ghost" onClick={onClose}>
-            Close
-          </button>
-        </div>
-      </div>
-    </div>
   );
 }
