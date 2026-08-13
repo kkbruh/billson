@@ -22,6 +22,44 @@ import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
 import { IntegrationsScreen } from './components/IntegrationsScreen';
 import { CmmsBillsScreen } from './components/CmmsBillsScreen';
+import { fetchBillFile } from './lib/cmmsBills';
+
+/** localStorage key for the durable pending CMMS queue (survives reloads). */
+const CMMS_QUEUE_KEY = 'billparser.cmmsQueue.v1';
+
+interface QueuedCmms {
+  recordId: number;
+  name: string;
+  origin: string;
+  addedAt: number;
+}
+
+/** Read the persisted pending-queue once (before the persist effect can clobber it). */
+function readQueue(): QueuedCmms[] {
+  try {
+    const raw = localStorage.getItem(CMMS_QUEUE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((q) => q && Number.isFinite(q.recordId) && typeof q.name === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Durable set of CMMS record ids already pulled into the Inbox — so the CMMS tab
+ *  doesn't re-offer bills you've already handled after a reload. */
+const CMMS_HANDLED_KEY = 'billparser.cmmsHandled.v1';
+
+function readHandled(): number[] {
+  try {
+    const raw = localStorage.getItem(CMMS_HANDLED_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((n) => Number.isFinite(n)) : [];
+  } catch {
+    return [];
+  }
+}
 
 type Theme = 'light' | 'dark';
 
@@ -55,8 +93,17 @@ export default function App() {
   // "In Inbox" state (and dedupe) survive navigating away from the CMMS tab.
   // The ref is the synchronous source of truth (reliable under concurrent adds);
   // the state mirror drives rendering.
-  const cmmsAddedRef = useRef<Set<number>>(new Set());
-  const [cmmsAdded, setCmmsAdded] = useState<Set<number>>(new Set());
+  const cmmsAddedRef = useRef<Set<number>>(new Set(readHandled()));
+  const [cmmsAdded, setCmmsAdded] = useState<Set<number>>(() => new Set(readHandled()));
+
+  // Persist the handled set so it survives reloads.
+  useEffect(() => {
+    try {
+      localStorage.setItem(CMMS_HANDLED_KEY, JSON.stringify([...cmmsAdded]));
+    } catch {
+      /* storage blocked/full — non-fatal */
+    }
+  }, [cmmsAdded]);
 
   // Session-scoped per-field evidence, keyed by saved bill id. Not persisted —
   // provenance has no database column, so Review shows it only for bills parsed
@@ -170,6 +217,90 @@ export default function App() {
         savedId: null,
       },
     ]);
+  }, []);
+
+  // ── durable Inbox queue ─────────────────────────────────────────────────────
+  // The Inbox queue is otherwise in-memory only, so a browser refresh empties it.
+  // Persist the pending CMMS-origin items and re-hydrate them on load by re-fetching
+  // each PDF from CMMS. Parsed bills aren't persisted here — they live durably in the
+  // register (Review). Manual uploads can't be restored (their bytes are gone on reload).
+  const hydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (!hydratedRef.current) return; // don't clobber the saved queue before hydration
+    const pending: QueuedCmms[] = inboxItems
+      .filter((i) => i.status === null && i.key.startsWith('cmms-'))
+      .map((i) => ({
+        recordId: Number(i.key.split('-')[1]),
+        name: i.name,
+        origin: i.origin,
+        addedAt: i.addedAt,
+      }))
+      .filter((q) => Number.isFinite(q.recordId));
+    try {
+      localStorage.setItem(CMMS_QUEUE_KEY, JSON.stringify(pending));
+    } catch {
+      /* storage blocked/full — non-fatal */
+    }
+  }, [inboxItems]);
+
+  useEffect(() => {
+    const saved = readQueue();
+    if (saved.length === 0) {
+      hydratedRef.current = true;
+      return;
+    }
+    let cancelled = false;
+    let cursor = 0;
+    const worker = async (restored: InboxItem[]) => {
+      for (;;) {
+        const i = cursor;
+        cursor += 1;
+        if (i >= saved.length) return;
+        const q = saved[i];
+        try {
+          const { file } = await fetchBillFile(q.recordId, q.name);
+          cmmsAddedRef.current.add(q.recordId);
+          restored.push({
+            key: `cmms-${q.recordId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            file,
+            name: q.name,
+            sizeBytes: file.size,
+            origin: q.origin,
+            addedAt: q.addedAt || Date.now(),
+            status: null,
+            reason: null,
+            bill: null,
+            fileId: null,
+            savedId: null,
+          });
+        } catch {
+          /* a record whose file can't be re-fetched is skipped */
+        }
+      }
+    };
+    const restored: InboxItem[] = [];
+    void Promise.all(Array.from({ length: Math.min(4, saved.length) }, () => worker(restored)))
+      .then(() => {
+        if (!cancelled && restored.length) {
+          setInboxItems((rows) => {
+            // Dedupe by record id so a double-invoke (React StrictMode) or an
+            // existing row never yields a duplicate queue item.
+            const have = new Set(
+              rows.filter((r) => r.key.startsWith('cmms-')).map((r) => Number(r.key.split('-')[1])),
+            );
+            const add = restored.filter((it) => !have.has(Number(it.key.split('-')[1])));
+            return add.length ? [...rows, ...add] : rows;
+          });
+          setCmmsAdded(new Set(cmmsAddedRef.current));
+        }
+      })
+      .finally(() => {
+        hydratedRef.current = true;
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const handleDelete = async (bill: SavedBill) => {
