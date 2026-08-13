@@ -137,6 +137,27 @@ export default function App() {
     }
   };
 
+  // Drop a fetched CMMS bill PDF into the Bills Inbox as a normal item, so it
+  // flows through the existing Parse → Review pipeline.
+  const addToInbox = useCallback((file: File, origin: string) => {
+    setInboxItems((rows) => [
+      ...rows,
+      {
+        key: `cmms-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        name: file.name,
+        sizeBytes: file.size,
+        origin,
+        addedAt: Date.now(),
+        status: null,
+        reason: null,
+        bill: null,
+        fileId: null,
+        savedId: null,
+      },
+    ]);
+  }, []);
+
   const handleDelete = async (bill: SavedBill) => {
     const label = bill.vendor_name ?? 'this bill';
     if (
@@ -295,7 +316,9 @@ export default function App() {
             />
           )}
 
-          {nav === 'cmms' && <CmmsBillsScreen />}
+          {nav === 'cmms' && (
+            <CmmsBillsScreen onSendToInbox={addToInbox} onGoToInbox={() => setNav('inbox')} />
+          )}
 
           {nav === 'sources' && <IntegrationsScreen />}
 

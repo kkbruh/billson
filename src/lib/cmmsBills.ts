@@ -1,19 +1,21 @@
 import { vibe } from '../vibe';
+import samplePdf from '../assets/samples/burnsville-june.pdf?inline';
 
 /**
  * Read-only client for the Facilio CMMS `custom_bills` module (the Bills the
  * mail/drive sweeps mirror into the product). This reads records LIVE through the
  * facilio-cmms connection — there is no app-DB copy.
  *
- * Note: the attachment comes back as metadata only ({ fileId, fileName, … }).
- * Facilio exposes no supported way to pull a custom-module file's bytes back out,
- * so this tab links to the record in Facilio to view/download the PDF rather than
- * rendering it inline. Parsing the file is a separate, source-refetch step.
+ * The attachment list-projection is metadata only ({ fileId, fileName, … }), but
+ * the real bytes ARE reachable now via `facilio-cmms.download-a-file-field`
+ * (see fetchBillFile) — so the PDF can be previewed inline and, later, re-parsed.
  */
 
 const CONNECTION = 'facilio-cmms';
 const ACTION = 'list-custom-module-records';
 const MODULE = 'custom_bills';
+/** The custom_bills FILE field that holds the bill PDF. */
+const FILE_FIELD = 'bill_attachment_pdf_custom_bills';
 
 /** Field API names (from the module metadata). Custom fields are `{field}_{module}`. */
 const SELECT = [
@@ -179,4 +181,70 @@ export async function listCmmsBills(params: ListParams = {}): Promise<CmmsBillsP
     count: toNum(payload.count),
     page: pagination?.page ?? page,
   };
+}
+
+// ── attachment bytes (via facilio-cmms.download-a-file-field) ────────────────
+
+function base64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** The download action's payload may be flat, wrapped in `output`, or inside a
+ *  `results[]` batch envelope — find the object that actually carries the bytes. */
+function findFilePayload(o: unknown): Record<string, unknown> | null {
+  if (!o || typeof o !== 'object') return null;
+  const obj = o as Record<string, unknown>;
+  if (typeof obj.file_base64 === 'string') return obj;
+  for (const v of Object.values(obj)) {
+    if (Array.isArray(v)) {
+      for (const it of v) {
+        const r = findFilePayload(it);
+        if (r) return r;
+      }
+    } else {
+      const r = findFilePayload(v);
+      if (r) return r;
+    }
+  }
+  return null;
+}
+
+export interface BillFile {
+  file: File;
+  url: string;
+  type: string;
+  name: string;
+}
+
+/**
+ * Fetch a record's bill PDF bytes. Returns a File (to hand to the Inbox) plus an
+ * object URL (for inline preview) — the caller revokes the url. Local dev has no
+ * Facilio session, so a bundled sample stands in.
+ */
+export async function fetchBillFile(recordId: number, displayName?: string): Promise<BillFile> {
+  const name = displayName || `bill-${recordId}.pdf`;
+
+  if (import.meta.env.DEV) {
+    const bytes = base64ToBytes((samplePdf.split(',')[1] ?? ''));
+    const file = new File([bytes as BlobPart], name, { type: 'application/pdf' });
+    return { file, url: URL.createObjectURL(file), type: 'application/pdf', name };
+  }
+
+  const raw = await vibe.executeAction<Record<string, unknown>>(CONNECTION, 'download-a-file-field', {
+    module_name: MODULE,
+    record_id: recordId,
+    field_name: FILE_FIELD,
+  });
+  const payload = findFilePayload(raw);
+  const b64 = payload && typeof payload.file_base64 === 'string' ? (payload.file_base64 as string) : '';
+  if (!b64) throw new Error('The bill file came back empty.');
+
+  const type = (
+    payload && typeof payload.content_type === 'string' ? (payload.content_type as string) : 'application/pdf'
+  ).split(';')[0];
+  const file = new File([base64ToBytes(b64) as BlobPart], name, { type });
+  return { file, url: URL.createObjectURL(file), type, name };
 }

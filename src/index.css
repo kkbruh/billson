@@ -3101,3 +3101,33 @@ textarea {
 .bi-detail__wide {
   grid-column: 1 / -1;
 }
+
+/* ── CMMS Bills: expanded row with inline PDF preview ─────────────────────── */
+.bi-cmms-expand {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(240px, 1fr);
+  gap: var(--spacing-containerXLarge);
+  align-items: start;
+  padding: var(--spacing-containerLarge) 0;
+}
+@media (max-width: 900px) {
+  .bi-cmms-expand { grid-template-columns: 1fr; }
+}
+.bi-cmms-preview {
+  height: 460px;
+  overflow: hidden;
+  display: flex;
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+  background: var(--colors-backgroundContainer);
+}
+.bi-cmms-preview .viewer { flex: 1; height: 100%; min-width: 0; }
+.bi-cmms-preview .viewer__body { flex: 1; overflow: auto; }
+.bi-cmms-side { display: grid; gap: var(--spacing-containerXLarge); align-content: start; }
+.bi-cmms-actions {
+  display: flex;
+  gap: var(--spacing-containerLarge);
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
