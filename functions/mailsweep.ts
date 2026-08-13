@@ -1,0 +1,776 @@
+import StudioFunctions, { StudioDatabase, VibeEvents } from "@facilio/studio-functions";
+
+/**
+ * Mail sweep — pulls Outlook bill emails into the Facilio Bills module.
+ *
+ * End to end, with no human in the loop:
+ *   list inbox -> dedupe on message id -> score for "is this a bill"
+ *   -> pull the PDF -> upload to Facilio -> create the Bills record with it attached.
+ *
+ * Two platform quirks this works around, both measured:
+ *   - Raw binary cannot be fetched here: the host decodes every body as UTF-8,
+ *     which destroyed ~37% of a test PDF. Graph's JSON wrapper carries the file
+ *     as `contentBytes` base64 (pure ASCII), which survives — that indirection
+ *     is the whole reason attachments are possible from a job.
+ *   - `facilio-cmms.create/update-custom-module-record` CANNOT write FILE
+ *     fields (fails in S3FileStore). Records therefore go through the
+ *     facilio-maintenance-api connection, passing the uploaded file id under
+ *     the field name + "Id" suffix.
+ *
+ * Cost control: fetches are serialized (~10s cap each) and a job run is capped
+ * at 15 minutes, so every remote call is bounded by MAX_* below. Anything the
+ * caps skip is REPORTED in the return value — never silently dropped.
+ *
+ * Idempotency: message_id is the dedupe key, so overlapping or repeated runs
+ * are safe. Use `forget` to deliberately reprocess a message.
+ */
+
+const server = new StudioFunctions({ name: "mailsweep" });
+const events = new VibeEvents();
+
+const TOPIC = "bills";
+const OUTLOOK = "outlook";
+const CMMS = "facilio-cmms";
+const MAINT = "facilio-maintenance-api";
+const BILLS_MODULE = "custom_bills";
+/**
+ * The FILE field is written by passing a file id under the field name plus an
+ * "Id" suffix. Writing the field itself (base64, file reference, or bare id)
+ * fails server-side in S3FileStore — this suffix form is the one that works.
+ */
+const ATTACH_FIELD_ID = "bill_attachment_pdf_custom_billsId";
+
+/** Hard ceilings so one run can't exceed the job timeout. */
+const MAX_MESSAGES = 40;
+const MAX_ENRICH = 8;
+
+const STATUSES = ["pending", "parsed", "not_bill", "error", "seed"];
+
+function db() {
+  return new StudioDatabase({
+    userName: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    schema: process.env.SCHEMA,
+  });
+}
+
+function nowIso(): string {
+  return new Date().toISOString();
+}
+
+function newId(): string {
+  const t = Date.now().toString(36);
+  const r = Math.random().toString(36).slice(2, 10);
+  const r2 = Math.random().toString(36).slice(2, 10);
+  return `mail_${t}_${r}${r2}`;
+}
+
+function text(value: unknown, max: number): string | null {
+  if (value === null || value === undefined) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  return s.length > max ? s.slice(0, max) : s;
+}
+
+function boolText(v: unknown): string {
+  return v === true || v === "true" ? "true" : "false";
+}
+
+/**
+ * Execute a saved connection action. The host injects the service token for
+ * *.facilio.* hosts, so no auth header is set here (one would be stripped).
+ */
+async function action(connection: string, slug: string, input: unknown): Promise<any> {
+  const url = `${process.system.CONNECTIONS_URL}/api/v1/connections/${connection}/actions/${slug}/execute`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ input }),
+  });
+  const raw = await res.text();
+  if (!res.ok) {
+    throw new Error(`${connection}.${slug} failed: ${res.status} ${raw.slice(0, 200)}`);
+  }
+  let parsed: any = null;
+  try {
+    parsed = raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    throw new Error(`${connection}.${slug} returned non-JSON: ${raw.slice(0, 200)}`);
+  }
+  // The service wraps action results inconsistently; unwrap the common shapes.
+  if (parsed && typeof parsed === "object") {
+    if (parsed.output !== undefined) return parsed.output;
+    if (parsed.data !== undefined && parsed.success !== undefined) return parsed;
+  }
+  return parsed;
+}
+
+
+/** This API wants epoch millis for date fields; ISO strings are rejected. */
+function epochMillis(v: unknown): number | null {
+  if (!v) return null;
+  const t = Date.parse(String(v));
+  return isNaN(t) ? null : t;
+}
+
+/**
+ * Pull an Outlook attachment's bytes as base64.
+ *
+ * The sandbox mangles raw binary (UTF-8 decode destroys ~37% of a PDF), but
+ * Graph wraps the file in JSON with `contentBytes` as base64 — pure ASCII, so
+ * it survives intact. That indirection is the only reason this works at all.
+ */
+async function attachmentBase64(messageId: string, attachmentId: string) {
+  const meta = await action(OUTLOOK, "get-an-attachment", {
+    message_id: messageId,
+    attachment_id: attachmentId,
+  });
+  const url = meta && meta.file_signed_url;
+  if (!url) throw new Error("no signed url on attachment");
+
+  const res = await fetch(String(url));
+  if (!res.ok) throw new Error(`attachment fetch failed: ${res.status}`);
+  const parsed = JSON.parse(await res.text());
+  const b64 = parsed && (parsed.contentBytes || parsed.ContentBytes);
+  if (!b64) throw new Error("no contentBytes in attachment payload");
+
+  return {
+    base64: String(b64),
+    filename: String(parsed.name || "attachment"),
+    contentType: String(parsed.contentType || "application/octet-stream"),
+  };
+}
+
+/** Upload bytes to Facilio's file store; returns the new file id. */
+async function uploadFile(base64: string, filename: string, contentType: string): Promise<number> {
+  const res = await action(MAINT, "upload-file", {
+    file: { __file__: true, filename, file_base64: base64, content_type: contentType },
+  });
+  const atts = res && res.data && res.data.attachments;
+  if (atts) {
+    for (const k in atts) {
+      const id = Number(atts[k]);
+      if (id) return id;
+    }
+  }
+  throw new Error("upload returned no file id");
+}
+
+/**
+ * Create the Bills record, attaching the source PDF when one is available.
+ *
+ * Goes through the maintenance-API connection rather than
+ * `facilio-cmms.create-custom-module-record`, because that action cannot write
+ * FILE fields at all. Attachment failures never sink the record — a bill with
+ * no PDF still beats no bill.
+ */
+async function createBillRecord(fields: any, att: { messageId: string; attachmentId: string } | null) {
+  const data: any = {
+    name: fields.name,
+    description_custom_bills: fields.description,
+    vendor_custom_bills_1: fields.vendor || null,
+    fromemail_custom_bills: fields.fromEmail,
+    // This API parses dates as epoch millis; an ISO string is rejected.
+    receivedat_custom_bills: epochMillis(fields.receivedAt),
+    messageid_custom_bills: fields.messageId,
+    // Their action's schema types this as object|null, not a string —
+    // the real attachment now carries the file, so leave it null.
+    billfile_custom_bills: null,
+  };
+
+  let attachedAs = 0;
+  let attachError: string | null = null;
+  if (att) {
+    try {
+      const file = await attachmentBase64(att.messageId, att.attachmentId);
+      const fileId = await uploadFile(file.base64, file.filename, file.contentType);
+      data[ATTACH_FIELD_ID] = fileId;
+      attachedAs = fileId;
+    } catch (e: any) {
+      attachError = String(e?.message || e).slice(0, 300);
+    }
+  }
+
+  const res = await action(MAINT, "create-custom-bill", { data });
+  // This API answers 200 with a non-zero `code` on failure. Without this check
+  // a rejected create looks like a success that simply produced no record.
+  if (res && res.code !== undefined && Number(res.code) !== 0) {
+    throw new Error(`create-custom-bill rejected (code ${res.code}): ${res.message || "no message"}`);
+  }
+  const rec = res && res.data && res.data.custom_bills;
+  const id = rec && rec.id ? String(rec.id) : null;
+  return { id, fileId: attachedAs, attachError };
+}
+
+// ── bill detection (text only) ────────────────────────────────────────────────
+
+/**
+ * Two tiers, because one keyword list can't separate "Tax Invoice INV-88213"
+ * from "Cut your energy bills by 30%". Strong terms are ones a marketer has no
+ * reason to use; weak terms are suggestive but alone prove nothing.
+ * Every pattern allows the plural — `\bbill\b` does NOT match "bills", which
+ * silently loses real mail titled "Your bills for August".
+ */
+const STRONG_SUBJECT_RE =
+  /\b(tax\s+invoices?|invoices?|remittances?|statements?|amount\s+due|payment\s+due|past\s+due|overdue|proforma)\b/i;
+const WEAK_SUBJECT_RE = /\b(bills?|billing|receipts?|utility|utilities|account\s+summary)\b/i;
+/** Abbreviated invoice references: "INV 002", "INV-88213", "Inv#4471", "INV_12". */
+const INVOICE_NO_RE = /\binv[\s._#-]?\d{1,}\b/i;
+/** Anchored to the local part so a vendor domain like billing.example can't score. */
+const SENDER_RE =
+  /^(billing|invoice|invoices|invoicing|accounts|accountsreceivable|accountspayable|ar|ap|finance|noreply-billing|no-reply-billing)@/i;
+const FILE_RE = /(invoices?|bills?|statements?|receipts?|inv[-_ ]?\d|\binv\d)/i;
+const MONEY_RE = /(?:[$£€₹]|\b(?:usd|gbp|eur|aud|aed|inr)\b)\s?\d[\d,]*(?:\.\d{2})?/i;
+const DOC_RE = /\.(pdf|png|jpg|jpeg|tiff?)$/i;
+/** Marketing tells. A promo that says "bills" should not reach the Bills module. */
+const PROMO_RE =
+  /(unsubscribe|\b\d{1,3}%\s*(off|discount|cheaper)|switch\s+today|limited\s+time|special\s+offer|save\s+up\s+to|click\s+here\s+to\s+save|newsletter)/i;
+
+/**
+ * Cheap, explainable scoring. Deliberately generous — staging a non-bill costs
+ * one row, missing a real bill costs money — but not so generous that marketing
+ * lands in the CMMS. Every reason is recorded so a reviewer sees WHY, and can
+ * tell a good flag from a lucky one.
+ */
+function detect(
+  subject: string | null,
+  fromEmail: string | null,
+  preview: string | null,
+  attachmentNames: string[]
+): { likely: boolean; signals: string[] } {
+  const signals: string[] = [];
+  let score = 0;
+
+  if (subject && STRONG_SUBJECT_RE.test(subject)) {
+    signals.push("subject_strong");
+    score += 2;
+  } else if (subject && INVOICE_NO_RE.test(subject)) {
+    // "INV 002", "INV-88213", "Inv#4471" — an invoice NUMBER is as strong a
+    // tell as the word itself, and abbreviating it is extremely common.
+    signals.push("subject_invoice_no");
+    score += 2;
+  } else if (subject && WEAK_SUBJECT_RE.test(subject)) {
+    // Suggestive only — needs corroboration from an attachment, sender or amount.
+    signals.push("subject_weak");
+    score += 1;
+  }
+  // Senders often put the word in the body rather than the subject
+  // ("Attachment bill", "please find the invoice attached").
+  if (preview && (STRONG_SUBJECT_RE.test(preview) || WEAK_SUBJECT_RE.test(preview))) {
+    signals.push("body_keyword");
+    score += 1;
+  }
+  if (fromEmail && SENDER_RE.test(fromEmail)) {
+    signals.push("sender_address");
+    score += 2;
+  }
+  if (attachmentNames.some((n) => DOC_RE.test(n))) {
+    signals.push("document_attached");
+    score += 1;
+  }
+  if (attachmentNames.some((n) => FILE_RE.test(n))) {
+    signals.push("attachment_name");
+    score += 2;
+  }
+  if (preview && MONEY_RE.test(preview)) {
+    signals.push("money_in_body");
+    score += 1;
+  }
+  // Applied last so it can veto an otherwise-tempting score.
+  const promoText = `${subject || ""} ${preview || ""}`;
+  if (PROMO_RE.test(promoText)) {
+    signals.push("promotional_penalty");
+    score -= 2;
+  }
+
+  return { likely: score >= 2, signals };
+}
+
+// ── handlers ──────────────────────────────────────────────────────────────────
+
+server.addHandler({
+  name: "check-schema",
+  description: "Confirm swept_emails is reachable, drop the import seed row, report counts",
+  parameters: {},
+  execute: async () => {
+    const conn = db();
+    conn.query(`delete from swept_emails where status = 'seed' or message_id = 'SEED-DO-NOT-USE'`);
+    const { rows } = conn.query(
+      `select status, count(*)::int as n from swept_emails group by status order by status`
+    );
+    const { rows: totals } = conn.query(`select count(*)::int as total from swept_emails`);
+    return { ok: true, total: totals[0]?.total ?? 0, byStatus: rows };
+  },
+});
+
+server.addHandler({
+  name: "sweep",
+  description:
+    "Pull recent Outlook messages, stage new ones in swept_emails, flag likely bills, and create a Bills record in the CMMS for each.",
+  parameters: {
+    limit: { description: "How many recent messages to scan (max 40)", type: "number" },
+    createRecords: {
+      description: "Set to 'false' to stage only and skip CMMS record creation",
+      type: "string",
+    },
+  },
+  execute: async (args) => {
+    const started = nowIso();
+    const limit = Math.max(1, Math.min(Number(args.limit) || 25, MAX_MESSAGES));
+    const createRecords = String(args.createRecords || "true") !== "false";
+    const conn = db();
+
+    // 1. Read the mailbox (one call).
+    const listed = await action(OUTLOOK, "list-inbox-and-folder-messages", { top: limit });
+    const messages: any[] = (listed && listed.messages) || [];
+
+    // 2. Drop anything already staged. One query, not one per message.
+    const ids = messages.map((m) => String(m?.id || "")).filter((s) => s.length > 0);
+    const seen: Record<string, boolean> = {};
+    if (ids.length) {
+      const { rows } = conn.query(
+        `select message_id from swept_emails where message_id = any($1)`,
+        [ids]
+      );
+      for (const r of rows) seen[String(r.message_id)] = true;
+    }
+    const fresh = messages.filter((m) => m?.id && !seen[String(m.id)]);
+
+    const staged: any[] = [];
+    const failures: any[] = [];
+    let enriched = 0;
+    let enrichSkipped = 0;
+    let recordsCreated = 0;
+    let attached = 0;
+
+    for (const m of fresh) {
+      const messageId = String(m.id);
+      try {
+        const subject = text(m.subject, 500);
+        const fromEmail = text(m.from, 255);
+        const fromName = text(m.from_name, 255);
+        const preview = text(m.preview, 4000);
+        const receivedAt = text(m.received_at, 64);
+        const webLink = text(m.web_link, 2000);
+        const hasAtt = m.has_attachments === true;
+
+        // 3. Attachment names cost one call each — only for messages that have
+        //    them, and only while budget remains. Skips are reported, not hidden.
+        let attachmentNames: string[] = [];
+        let firstDocId = "";
+        if (hasAtt) {
+          if (enriched < MAX_ENRICH) {
+            enriched++;
+            try {
+              const att = await action(OUTLOOK, "list-an-email-s-attachments", {
+                message_id: messageId,
+              });
+              const list: any[] = ((att && att.attachments) || []).filter(
+                (a: any) => a && a.is_inline !== true
+              );
+              attachmentNames = list
+                .map((a: any) => String(a.name || ""))
+                .filter((n: string) => n.length > 0);
+              // Prefer a real document over an inline image or signature logo.
+              for (const a of list) {
+                if (DOC_RE.test(String(a.name || ""))) {
+                  firstDocId = String(a.id || "");
+                  break;
+                }
+              }
+            } catch (e: any) {
+              failures.push({ messageId, stage: "attachments", error: String(e?.message || e) });
+            }
+          } else {
+            enrichSkipped++;
+          }
+        }
+
+        const { likely, signals } = detect(subject, fromEmail, preview, attachmentNames);
+
+        // 4. Stage the row first — the CMMS record is best-effort after it.
+        const id = newId();
+        const stamp = nowIso();
+        conn.query(
+          `insert into swept_emails
+             (id, message_id, subject, from_email, from_name, received_at, preview,
+              has_attachments, attachment_count, attachment_names, likely_bill,
+              bill_signals, status, web_link, created_at, updated_at)
+           values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+          [
+            id,
+            messageId,
+            subject,
+            fromEmail,
+            fromName,
+            receivedAt,
+            preview,
+            boolText(hasAtt),
+            attachmentNames.length,
+            JSON.stringify(attachmentNames),
+            boolText(likely),
+            JSON.stringify(signals),
+            "pending",
+            webLink,
+            stamp,
+            stamp,
+          ]
+        );
+
+        // 5. Mirror it into the CMMS Bills module so it is triageable in Facilio.
+        let cmmsId: string | null = null;
+        if (createRecords && likely) {
+          try {
+            const created = await createBillRecord(
+              {
+                name: subject || `(no subject) ${messageId.slice(0, 20)}`,
+                description: preview,
+                fromEmail,
+                receivedAt,
+                messageId,
+                billFile: attachmentNames.length ? JSON.stringify(attachmentNames) : null,
+              },
+              firstDocId ? { messageId, attachmentId: firstDocId } : null
+            );
+            cmmsId = created.id;
+            if (created.attachError) {
+              failures.push({ messageId, stage: "attach", error: created.attachError });
+            }
+            if (cmmsId) {
+              recordsCreated++;
+              if (created.fileId) attached++;
+              conn.query(
+                `update swept_emails set cmms_record_id = $1, updated_at = $2 where id = $3`,
+                [cmmsId, nowIso(), id]
+              );
+            }
+          } catch (e: any) {
+            failures.push({ messageId, stage: "cmms", error: String(e?.message || e) });
+            conn.query(`update swept_emails set error = $1, updated_at = $2 where id = $3`, [
+              String(e?.message || e).slice(0, 1000),
+              nowIso(),
+              id,
+            ]);
+          }
+        }
+
+        staged.push({ id, messageId, subject, likely, signals, cmmsId });
+      } catch (e: any) {
+        failures.push({ messageId, stage: "stage", error: String(e?.message || e) });
+      }
+    }
+
+    // 6. One event for the whole sweep — never one per row (§7b).
+    const likelyCount = staged.filter((s) => s.likely).length;
+    await events.publish(TOPIC, {
+      type: "mail.swept",
+      staged: staged.length,
+      likelyBills: likelyCount,
+    });
+
+    return {
+      ok: true,
+      startedAt: started,
+      finishedAt: nowIso(),
+      scanned: messages.length,
+      alreadySeen: messages.length - fresh.length,
+      staged: staged.length,
+      likelyBills: likelyCount,
+      recordsCreated,
+      pdfsAttached: attached,
+      attachmentLookupsSkipped: enrichSkipped,
+      failures,
+      items: staged,
+    };
+  },
+});
+
+server.addHandler({
+  name: "simulate",
+  description:
+    "Run one synthetic message through the real detect → stage → CMMS path. Lets the pipeline be verified while the mailbox is unreachable. Use messageId 'SIM-*' so simulated rows stay identifiable.",
+  parameters: {
+    messageId: { description: "Fake message id, should start with SIM-", type: "string" },
+    subject: { description: "Email subject", type: "string" },
+    fromEmail: { description: "Sender address", type: "string" },
+    preview: { description: "Body preview text", type: "string" },
+    attachmentNames: { description: "JSON array of attachment file names", type: "string" },
+    createRecord: { description: "'false' to skip the CMMS write", type: "string" },
+  },
+  execute: async (args) => {
+    const messageId = text(args.messageId, 400) || `SIM-${newId()}`;
+    const subject = text(args.subject, 500);
+    const fromEmail = text(args.fromEmail, 255);
+    const preview = text(args.preview, 4000);
+    const createRecord = String(args.createRecord || "true") !== "false";
+
+    let attachmentNames: string[] = [];
+    try {
+      const parsed = JSON.parse(String(args.attachmentNames || "[]"));
+      if (Array.isArray(parsed)) attachmentNames = parsed.map((n) => String(n));
+    } catch (e) {
+      throw new Error("attachmentNames must be a JSON array string");
+    }
+
+    const conn = db();
+    const { rows: dupe } = conn.query(
+      `select id from swept_emails where message_id = $1`,
+      [messageId]
+    );
+    if (dupe.length) {
+      return { ok: true, deduped: true, note: "already staged — dedupe works", id: dupe[0].id };
+    }
+
+    const { likely, signals } = detect(subject, fromEmail, preview, attachmentNames);
+    const id = newId();
+    const stamp = nowIso();
+    conn.query(
+      `insert into swept_emails
+         (id, message_id, subject, from_email, from_name, received_at, preview,
+          has_attachments, attachment_count, attachment_names, likely_bill,
+          bill_signals, status, web_link, created_at, updated_at)
+       values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
+      [
+        id,
+        messageId,
+        subject,
+        fromEmail,
+        null,
+        stamp,
+        preview,
+        boolText(attachmentNames.length > 0),
+        attachmentNames.length,
+        JSON.stringify(attachmentNames),
+        boolText(likely),
+        JSON.stringify(signals),
+        "pending",
+        null,
+        stamp,
+        stamp,
+      ]
+    );
+
+    let cmmsId: string | null = null;
+    let cmmsError: string | null = null;
+    if (createRecord && likely) {
+      try {
+        const created = await action(CMMS, "create-custom-module-record", {
+          custom_module: BILLS_MODULE,
+          record: {
+            name: subject || `(no subject) ${messageId}`,
+            description_custom_bills: preview,
+            fromemail_custom_bills: fromEmail,
+            receivedat_custom_bills: stamp,
+            messageid_custom_bills: messageId,
+            billfile_custom_bills: attachmentNames.length
+              ? JSON.stringify(attachmentNames)
+              : null,
+          },
+        });
+        const rec = created && (created.data || created);
+        cmmsId = rec && rec.id ? String(rec.id) : null;
+        if (cmmsId) {
+          conn.query(
+            `update swept_emails set cmms_record_id = $1, updated_at = $2 where id = $3`,
+            [cmmsId, nowIso(), id]
+          );
+        }
+      } catch (e: any) {
+        cmmsError = String(e?.message || e).slice(0, 500);
+      }
+    }
+
+    return { ok: true, id, messageId, likely, signals, cmmsId, cmmsError };
+  },
+});
+
+server.addHandler({
+  name: "list-pending",
+  description:
+    "Rows still awaiting a deep parse. The app calls this, runs bill-extractor in the browser, then calls attach-parse.",
+  parameters: {
+    onlyLikely: { description: "'true' to return only flagged bills", type: "string" },
+    limit: { description: "Max rows (default 50)", type: "number" },
+  },
+  execute: async (args) => {
+    const onlyLikely = String(args.onlyLikely || "true") !== "false";
+    const limit = Math.max(1, Math.min(Number(args.limit) || 50, 200));
+    const conn = db();
+    const sql = onlyLikely
+      ? `select * from swept_emails where status = 'pending' and likely_bill = 'true'
+           order by received_at desc limit $1`
+      : `select * from swept_emails where status = 'pending' order by received_at desc limit $1`;
+    const { rows } = conn.query(sql, [limit]);
+    return { rowCount: rows.length, rows };
+  },
+});
+
+server.addHandler({
+  name: "attach-parse",
+  description:
+    "Record the outcome of a browser-side parse: link the parsed bill id, or mark the row not_bill / error.",
+  parameters: {
+    id: { description: "swept_emails row id", type: "string" },
+    billId: { description: "parsed_bills id, or empty", type: "string" },
+    status: { description: "parsed | not_bill | error", type: "string" },
+    error: { description: "Failure detail when status is error", type: "string" },
+  },
+  execute: async (args) => {
+    const id = text(args.id, 200);
+    if (!id) throw new Error("an id is required");
+    const status = text(args.status, 32) || "parsed";
+    if (STATUSES.indexOf(status) < 0) throw new Error(`unknown status: ${status}`);
+
+    const conn = db();
+    const { rows } = conn.query(
+      `update swept_emails
+          set bill_id = $1, status = $2, error = $3, updated_at = $4
+        where id = $5
+        returning *`,
+      [text(args.billId, 200), status, text(args.error, 1000), nowIso(), id]
+    );
+    if (!rows.length) throw new Error(`swept email ${id} not found`);
+
+    await events.publish(TOPIC, { type: "mail.parsed", id, status });
+    return { ok: true, row: rows[0] };
+  },
+});
+
+server.addHandler({
+  name: "rescore",
+  description:
+    "Re-run bill detection over already-staged pending rows and create CMMS records for anything newly flagged. Run this after changing the detector — dedupe means a normal sweep will never look at these messages again.",
+  parameters: {
+    limit: { description: "Max rows to re-examine (default 200)", type: "number" },
+    createRecords: { description: "'false' to rescore without writing to the CMMS", type: "string" },
+  },
+  execute: async (args) => {
+    const limit = Math.max(1, Math.min(Number(args.limit) || 200, 500));
+    const createRecords = String(args.createRecords || "true") !== "false";
+    const conn = db();
+
+    // Only rows still awaiting triage and not already mirrored into the CMMS.
+    const { rows } = conn.query(
+      `select * from swept_emails
+        where status = 'pending' and coalesce(cmms_record_id, '') = ''
+        order by received_at desc limit $1`,
+      [limit]
+    );
+
+    const promoted: any[] = [];
+    const failures: any[] = [];
+    let changed = 0;
+
+    for (const r of rows) {
+      let names: string[] = [];
+      try {
+        const parsed = JSON.parse(String(r.attachment_names || "[]"));
+        if (Array.isArray(parsed)) names = parsed.map((n) => String(n));
+      } catch (e) {}
+
+      const { likely, signals } = detect(
+        r.subject ? String(r.subject) : null,
+        r.from_email ? String(r.from_email) : null,
+        r.preview ? String(r.preview) : null,
+        names
+      );
+
+      const was = String(r.likely_bill) === "true";
+      if (was === likely && String(r.bill_signals || "") === JSON.stringify(signals)) continue;
+
+      changed++;
+      conn.query(
+        `update swept_emails set likely_bill = $1, bill_signals = $2, updated_at = $3 where id = $4`,
+        [boolText(likely), JSON.stringify(signals), nowIso(), r.id]
+      );
+
+      // Newly a bill → mirror it into the CMMS, same as a fresh sweep would.
+      if (likely && !was && createRecords) {
+        try {
+          const created = await action(CMMS, "create-custom-module-record", {
+            custom_module: BILLS_MODULE,
+            record: {
+              name: r.subject ? String(r.subject) : `(no subject) ${String(r.message_id).slice(0, 20)}`,
+              description_custom_bills: r.preview,
+              fromemail_custom_bills: r.from_email,
+              receivedat_custom_bills: r.received_at,
+              messageid_custom_bills: r.message_id,
+              billfile_custom_bills: names.length ? JSON.stringify(names) : null,
+            },
+          });
+          const rec = created && (created.data || created);
+          const cmmsId = rec && rec.id ? String(rec.id) : null;
+          if (cmmsId) {
+            conn.query(
+              `update swept_emails set cmms_record_id = $1, updated_at = $2 where id = $3`,
+              [cmmsId, nowIso(), r.id]
+            );
+            promoted.push({ id: r.id, subject: r.subject, signals, cmmsId });
+          }
+        } catch (e: any) {
+          failures.push({ id: r.id, error: String(e?.message || e).slice(0, 300) });
+        }
+      }
+    }
+
+    if (promoted.length) {
+      await events.publish(TOPIC, { type: "mail.rescored", promoted: promoted.length });
+    }
+    return { ok: true, examined: rows.length, changed, promoted, failures };
+  },
+});
+
+server.addHandler({
+  name: "forget",
+  description:
+    "Delete staged rows whose subject matches, so the next sweep reprocesses those messages from scratch. Does not touch records already created in the CMMS.",
+  parameters: { subjectLike: { description: "SQL LIKE pattern, e.g. 'INV 002%'", type: "string" } },
+  execute: async (args) => {
+    const pattern = text(args.subjectLike, 200);
+    if (!pattern) throw new Error("subjectLike is required");
+    const conn = db();
+    const { rows } = conn.query(
+      `delete from swept_emails where subject like $1 returning id, subject`,
+      [pattern]
+    );
+    return { ok: true, deleted: rows.length, rows };
+  },
+});
+
+server.addHandler({
+  name: "purge-simulated",
+  description:
+    "Delete rows staged by `simulate` (message_id starting SIM-). Test data only — never touches real swept mail.",
+  parameters: {},
+  execute: async () => {
+    const conn = db();
+    const { rows } = conn.query(
+      `delete from swept_emails where message_id like 'SIM-%' returning id, message_id`
+    );
+    return { ok: true, deleted: rows.length, rows };
+  },
+});
+
+server.addHandler({
+  name: "get-stats",
+  description: "Queue counts for the monitor screen",
+  parameters: {},
+  execute: async () => {
+    const conn = db();
+    const { rows } = conn.query(
+      `select status,
+              sum(case when likely_bill = 'true' then 1 else 0 end)::int as likely,
+              count(*)::int as n
+         from swept_emails
+        group by status
+        order by status`
+    );
+    const { rows: last } = conn.query(
+      `select max(created_at) as last_sweep from swept_emails`
+    );
+    return { byStatus: rows, lastSweep: last[0]?.last_sweep ?? null };
+  },
+});
+
+server.execute();
+

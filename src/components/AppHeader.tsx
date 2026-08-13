@@ -2,10 +2,11 @@ import appIcon from '../assets/icons/app-icon.svg';
 import navStats from '../assets/icons/nav-stats.svg';
 import navInbox from '../assets/icons/nav-inbox-list.svg';
 import navReview from '../assets/icons/nav-review.svg';
+import navIntegrations from '../assets/icons/nav-integrations.svg';
 import bellIcon from '../assets/icons/notification.svg';
 import type { CurrentUser } from '../lib/api';
 
-export type Screen = 'stats' | 'inbox' | 'review';
+export type Screen = 'stats' | 'inbox' | 'review' | 'integrations';
 
 export type SyncState = 'live' | 'checking' | 'error' | 'off';
 
@@ -40,6 +41,7 @@ const NAV: { key: Screen; label: string; icon: string }[] = [
   { key: 'stats', label: 'Stats', icon: navStats },
   { key: 'inbox', label: 'Inbox', icon: navInbox },
   { key: 'review', label: 'Review', icon: navReview },
+  { key: 'integrations', label: 'Integrations', icon: navIntegrations },
 ];
 
 const SYNC_DOT: Record<SyncState, string> = {

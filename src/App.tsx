@@ -17,6 +17,7 @@ import { AppHeader, type Screen, type SyncState } from './components/AppHeader';
 import { InboxScreen, type InboxItem } from './components/InboxScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
+import { IntegrationsScreen } from './components/IntegrationsScreen';
 
 type Theme = 'light' | 'dark';
 
@@ -293,6 +294,8 @@ export default function App() {
             onGoToInbox={() => setScreen('review')}
           />
         )}
+
+        {screen === 'integrations' && <IntegrationsScreen />}
       </main>
 
       {toast && (

@@ -385,11 +385,15 @@ textarea {
 .chip--green {
   background: var(--colors-backgroundSemanticGreenSubtle);
   border-color: var(--colors-borderSemanticGreenLight);
+  /* The green fill is a light tint in both themes; the inherited near-white
+     chip text washes out on it (~2:1). A dark green ink restores contrast (~7.6:1). */
+  color: #0f5132;
 }
 
 .chip--red {
   background: var(--colors-backgroundSemanticRedSubtler);
   border-color: var(--colors-borderSemanticRedMedium);
+  color: #842029;
 }
 
 .chip--neutral {
@@ -2187,4 +2191,109 @@ textarea {
 .viewer__canvas {
   display: block;
   background: #ffffff;
+}
+
+/* ── integrations screen ──────────────────────────────────────────────────── */
+.intg-section {
+  display: grid;
+  gap: var(--spacing-containerLarge);
+  margin-bottom: var(--spacing-sectionSmall);
+}
+
+.intg-card {
+  background: var(--colors-backgroundContainer);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+  padding: var(--spacing-containerXLarge) var(--spacing-containerXxLarge);
+  display: grid;
+  gap: var(--spacing-containerMedium);
+}
+
+.intg-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerLarge);
+  flex-wrap: wrap;
+}
+
+.intg-card__id {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.intg-card__name {
+  font-size: var(--typography-bodyMed14-fontSize, 14px);
+  font-weight: 600;
+  color: var(--colors-textMain);
+}
+
+.intg-card__controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+}
+
+.intg-card__detail {
+  font-size: var(--typography-captionReg12-fontSize);
+  margin: 0;
+}
+
+.intg-card__detail--err {
+  color: var(--colors-textSemanticRed);
+}
+
+.intg-card__body {
+  display: grid;
+  gap: var(--spacing-containerLarge);
+  border-top: 1px solid var(--colors-borderNeutralBaseSubtler);
+  padding-top: var(--spacing-containerLarge);
+  margin-top: var(--spacing-containerSmall);
+}
+
+.intg-textarea {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: vertical;
+}
+
+.intg-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-containerLarge);
+}
+
+.intg-map-group {
+  display: grid;
+  gap: var(--spacing-containerMedium);
+}
+
+.intg-map-group__label {
+  font-size: var(--typography-captionReg12-fontSize);
+  color: var(--colors-textCaption);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.intg-map-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+}
+
+.intg-map-row__key {
+  font-size: var(--typography-bodyReg14-fontSize);
+  color: var(--colors-textMain);
+}
+
+.intg-map-row__arrow {
+  color: var(--colors-textCaption);
+}
+
+.intg-map-row__input {
+  max-width: 320px;
 }
