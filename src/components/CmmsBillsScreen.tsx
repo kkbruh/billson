@@ -1,7 +1,9 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
   fetchBillFile,
+  getLastPull,
   listCmmsBills,
+  pullEmails,
   recordUrl,
   type CmmsBill,
   type CmmsBillsPage,
@@ -11,9 +13,14 @@ import { DocViewer } from './DocViewer';
 
 interface Props {
   /** Hand a fetched bill PDF to the Bills Inbox (App owns the inbox state). */
-  onSendToInbox: (file: File, origin: string) => void;
+  onSendToInbox: (file: File, origin: string, recordId: number) => void;
   onGoToInbox: () => void;
+  /** Record ids already queued into the Inbox (owned by App; survives nav). */
+  addedIds: Set<number>;
 }
+
+/** How many attachment downloads to run at once in "Add all" (rate-limit safe). */
+const BULK_CONCURRENCY = 5;
 
 function fmtMoney(amount: number | null, currency: string | null): string {
   if (amount === null) return '—';
@@ -35,7 +42,7 @@ interface Preview {
   name: string;
 }
 
-export function CmmsBillsScreen({ onSendToInbox, onGoToInbox }: Props) {
+export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props) {
   const [data, setData] = useState<CmmsBillsPage>({ bills: [], count: null, page: 1 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -47,9 +54,11 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox }: Props) {
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const [addedIds, setAddedIds] = useState<Set<number>>(new Set());
   const [busyAddId, setBusyAddId] = useState<number | null>(null);
   const [bulkRunning, setBulkRunning] = useState(false);
+
+  const [lastPull, setLastPull] = useState<string | null>(null);
+  const [pulling, setPulling] = useState(false);
 
   const load = useCallback(async (term: string) => {
     setLoading(true);
@@ -108,17 +117,40 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox }: Props) {
     return () => clearTimeout(t);
   }, [notice]);
 
+  // Show when the mailbox was last swept.
+  useEffect(() => {
+    void getLastPull().then(setLastPull).catch(() => {});
+  }, []);
+
+  // Manual on-demand mailbox scour → new CMMS bill records → refresh the list.
+  const pullNow = async () => {
+    setPulling(true);
+    setError(null);
+    try {
+      const res = await pullEmails();
+      setLastPull(res.finishedAt);
+      await load(search);
+      setNotice(
+        `Scoured ${res.scanned} email${res.scanned === 1 ? '' : 's'} — ` +
+          `${res.recordsCreated} new bill${res.recordsCreated === 1 ? '' : 's'} created.`,
+      );
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setPulling(false);
+    }
+  };
+
   const total = data.count ?? data.bills.length;
   const pending = data.bills.filter((b) => b.attachment && !addedIds.has(b.id));
 
   const addOne = async (b: CmmsBill) => {
-    if (!b.attachment) return;
+    if (!b.attachment || addedIds.has(b.id)) return;
     setBusyAddId(b.id);
     setError(null);
     try {
       const { file } = await fetchBillFile(b.id, b.attachment.fileName);
-      onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`);
-      setAddedIds((s) => new Set(s).add(b.id));
+      onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`, b.id);
       setNotice(`Added “${b.attachment.fileName}” to the Bills Inbox.`);
     } catch (err) {
       setError(errorMessage(err));
@@ -127,6 +159,12 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox }: Props) {
     }
   };
 
+  /**
+   * Bulk add: fetch attachments through a bounded worker pool (BULK_CONCURRENCY
+   * at a time) rather than one-at-a-time — parallel where it helps, but capped so
+   * we never burst past the connection rate limit. App dedupes by record id, so a
+   * re-run only picks up what's genuinely new.
+   */
   const addAll = async () => {
     const targets = data.bills.filter((b) => b.attachment && !addedIds.has(b.id));
     if (targets.length === 0) {
@@ -135,21 +173,33 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox }: Props) {
     }
     setBulkRunning(true);
     setError(null);
-    let added = 0;
+
+    let cursor = 0;
+    let done = 0;
     let failed = 0;
-    for (const b of targets) {
-      try {
-        const { file } = await fetchBillFile(b.id, b.attachment!.fileName);
-        onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`);
-        setAddedIds((s) => new Set(s).add(b.id));
-        added += 1;
-        setNotice(`Adding to Inbox… ${added}/${targets.length}`);
-      } catch {
-        failed += 1;
+    const worker = async () => {
+      for (;;) {
+        const i = cursor;
+        cursor += 1;
+        if (i >= targets.length) return;
+        const b = targets[i];
+        try {
+          const { file } = await fetchBillFile(b.id, b.attachment!.fileName);
+          onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`, b.id);
+          done += 1;
+        } catch {
+          failed += 1;
+        }
+        setNotice(`Adding to Inbox… ${done + failed}/${targets.length}`);
       }
-    }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(BULK_CONCURRENCY, targets.length) }, () => worker()),
+    );
+
     setBulkRunning(false);
-    setNotice(`Added ${added} bill${added === 1 ? '' : 's'} to the Inbox${failed ? `, ${failed} failed` : ''}.`);
+    setNotice(`Added ${done} bill${done === 1 ? '' : 's'} to the Inbox${failed ? `, ${failed} failed` : ''}.`);
   };
 
   return (
@@ -166,6 +216,19 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox }: Props) {
           />
         </div>
         <div className="bi-toolbar__end">
+          <span className="bi-tablefoot__count" title="When the Outlook mailbox was last scoured">
+            Last pulled: {lastPull ? fmtDate(lastPull, true) : 'never'}
+          </span>
+          <button
+            type="button"
+            className="btn"
+            disabled={pulling}
+            onClick={() => void pullNow()}
+            title="Scour the Outlook mailbox now for new bills"
+          >
+            {pulling ? <span className="btn__spinner" aria-hidden="true" /> : null}
+            {pulling ? ' Pulling…' : 'Pull emails'}
+          </button>
           <span className="bi-tablefoot__count">
             {loading ? 'Loading…' : `${total} record${total === 1 ? '' : 's'}`}
           </span>

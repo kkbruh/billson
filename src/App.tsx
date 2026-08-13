@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { vibe } from './vibe';
 import {
   BILLS_TOPIC,
@@ -51,6 +51,12 @@ export default function App() {
 
   // Owned here so the Inbox survives navigating between screens mid-run.
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
+  // CMMS record ids already pushed into the Inbox — kept at App level so the
+  // "In Inbox" state (and dedupe) survive navigating away from the CMMS tab.
+  // The ref is the synchronous source of truth (reliable under concurrent adds);
+  // the state mirror drives rendering.
+  const cmmsAddedRef = useRef<Set<number>>(new Set());
+  const [cmmsAdded, setCmmsAdded] = useState<Set<number>>(new Set());
 
   // Session-scoped per-field evidence, keyed by saved bill id. Not persisted —
   // provenance has no database column, so Review shows it only for bills parsed
@@ -139,11 +145,19 @@ export default function App() {
 
   // Drop a fetched CMMS bill PDF into the Bills Inbox as a normal item, so it
   // flows through the existing Parse → Review pipeline.
-  const addToInbox = useCallback((file: File, origin: string) => {
+  const addToInbox = useCallback((file: File, origin: string, recordId?: number) => {
+    // Idempotent by record id: re-adding the same CMMS record is a no-op, so a
+    // repeated click or a re-run of "Add all" never creates duplicate items.
+    // The ref check is synchronous, so it holds even under many concurrent adds.
+    if (recordId != null) {
+      if (cmmsAddedRef.current.has(recordId)) return;
+      cmmsAddedRef.current.add(recordId);
+      setCmmsAdded(new Set(cmmsAddedRef.current));
+    }
     setInboxItems((rows) => [
       ...rows,
       {
-        key: `cmms-${file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        key: `cmms-${recordId ?? file.size}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         file,
         name: file.name,
         sizeBytes: file.size,
@@ -317,7 +331,11 @@ export default function App() {
           )}
 
           {nav === 'cmms' && (
-            <CmmsBillsScreen onSendToInbox={addToInbox} onGoToInbox={() => setNav('inbox')} />
+            <CmmsBillsScreen
+              onSendToInbox={addToInbox}
+              onGoToInbox={() => setNav('inbox')}
+              addedIds={cmmsAdded}
+            />
           )}
 
           {nav === 'sources' && <IntegrationsScreen />}

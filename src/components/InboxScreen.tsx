@@ -10,6 +10,7 @@ import {
 import { icons, type IconName } from '../lib/icons';
 import { ExtractionUnavailableError, errorMessage, parseBillFile, saveBill } from '../lib/api';
 import { fetchProductBills, humanSize } from '../lib/productBills';
+import { validateBill } from '../lib/validate';
 import type { ExtractedBill, Provenance } from '../types';
 import type { FileStatus } from './StatusIcon';
 
@@ -212,7 +213,16 @@ export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer, 
       patch(key, { status: 'parsing', reason: null });
       try {
         const { bill, fileId } = await parseBillFile(file);
-        const attention = bill.confidence === 'low' || bill.confidence === 'medium';
+        // Route to Review on EITHER low model confidence OR a failed independent
+        // sanity check — never auto-validate on the model's word alone.
+        const lowConfidence = bill.confidence === 'low' || bill.confidence === 'medium';
+        const check = validateBill(bill);
+        const attention = lowConfidence || !check.ok;
+        const reason = !check.ok
+          ? check.reason
+          : lowConfidence
+            ? (bill.notes ?? 'Low confidence — check the values.')
+            : null;
         const saved = await saveBill(
           {
             ...bill,
@@ -228,7 +238,7 @@ export function InboxScreen({ items, setItems, onParsed, onReviewAll, reviewer, 
           bill,
           fileId,
           savedId: saved.id,
-          reason: attention ? (bill.notes ?? 'Low confidence — check the values.') : null,
+          reason,
         });
         onParsed(saved.id, bill.provenance);
         return true;

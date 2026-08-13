@@ -21,12 +21,14 @@ interface NavDef {
 /** Primary nav, top group. `settings` lives in the footer, so it's not here. */
 export const NAV: NavDef[] = [
   { key: 'dashboard', label: 'Home/Dashboard', icon: 'dashboard' },
+  // Pipeline order: bills land in the CMMS module → pulled into the Inbox to
+  // parse → routed to the Review Queue.
+  { key: 'cmms', label: 'CMMS Bills', icon: 'cmms' },
   { key: 'inbox', label: 'Bills Inbox', icon: 'inbox' },
   { key: 'review', label: 'Review Queue', icon: 'review' },
-  { key: 'cmms', label: 'CMMS Bills', icon: 'cmms' },
+  { key: 'sources', label: 'Sources & Integrations', icon: 'sources' },
   { key: 'templates', label: 'Templates', icon: 'templates' },
   { key: 'clients', label: 'Clients & Providers', icon: 'clients' },
-  { key: 'sources', label: 'Sources & Integrations', icon: 'sources' },
   { key: 'reports', label: 'Reports', icon: 'reports' },
 ];
 

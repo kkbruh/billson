@@ -248,3 +248,35 @@ export async function fetchBillFile(recordId: number, displayName?: string): Pro
   const file = new File([base64ToBytes(b64) as BlobPart], name, { type });
   return { file, url: URL.createObjectURL(file), type, name };
 }
+
+// ── manual mailbox pull (mailsweep) ──────────────────────────────────────────
+
+export interface SweepResult {
+  scanned: number;
+  staged: number;
+  likelyBills: number;
+  recordsCreated: number;
+  finishedAt: string | null;
+}
+
+/** Trigger the Outlook sweep on demand: scan recent mail, stage bills, create CMMS records. */
+export async function pullEmails(limit = 25): Promise<SweepResult> {
+  if (import.meta.env.DEV) {
+    return { scanned: 0, staged: 0, likelyBills: 0, recordsCreated: 0, finishedAt: new Date().toISOString() };
+  }
+  const res = await vibe.executeFunction<Record<string, unknown>>('mailsweep', 'sweep', { limit });
+  return {
+    scanned: toNum(res?.scanned) ?? 0,
+    staged: toNum(res?.staged) ?? 0,
+    likelyBills: toNum(res?.likelyBills) ?? 0,
+    recordsCreated: toNum(res?.recordsCreated) ?? 0,
+    finishedAt: toStr(res?.finishedAt),
+  };
+}
+
+/** When the mailbox was last swept (max created_at across staged emails). */
+export async function getLastPull(): Promise<string | null> {
+  if (import.meta.env.DEV) return null;
+  const res = await vibe.executeFunction<{ lastSweep?: unknown }>('mailsweep', 'get-stats', {});
+  return toStr(res?.lastSweep);
+}
