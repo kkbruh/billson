@@ -29,8 +29,28 @@ const SELECT = [
   'fromemail_custom_bills',
   'description_custom_bills',
   'moduleState',
+  'status_custom_bills',
   'bill_attachment_pdf_custom_bills',
 ].join(',');
+
+/**
+ * status_custom_bills ENUM indices — writes take the numeric index, reads/filters
+ * return the label. Order is fixed by the module's picklist:
+ *   1 Parsed · 2 Rejected · 3 Under Review · 4 Approved · 5 Yet To Triage
+ */
+export const BILL_STATUS = {
+  parsed: 1,
+  rejected: 2,
+  underReview: 3,
+  approved: 4,
+  yetToTriage: 5,
+} as const;
+
+/** A bill is "actionable" (shown on the CMMS list by default) while it's untouched. */
+export function isActionableStatus(status: string | null): boolean {
+  const v = (status || '').trim().toLowerCase();
+  return v === '' || v === 'yet to triage';
+}
 
 export interface CmmsAttachment {
   fileId: number;
@@ -51,6 +71,8 @@ export interface CmmsBill {
   fromEmail: string | null;
   description: string | null;
   status: string | null;
+  /** The lifecycle status picklist (status_custom_bills), as its label. */
+  billStatus: string | null;
   attachment: CmmsAttachment | null;
 }
 
@@ -108,8 +130,19 @@ function toBill(row: Record<string, unknown>): CmmsBill {
     fromEmail: toStr(row.fromemail_custom_bills),
     description: toStr(row.description_custom_bills),
     status: toStatus(row.moduleState),
+    billStatus: toStr(row.status_custom_bills),
     attachment: toAttachment(row.bill_attachment_pdf_custom_bills),
   };
+}
+
+/** Write the lifecycle status back to the Facilio record (durable, shared). */
+export async function setBillStatus(recordId: number, status: number): Promise<void> {
+  if (import.meta.env.DEV) return;
+  await vibe.executeAction('facilio-cmms', 'update-custom-module-record', {
+    custom_module: MODULE,
+    id: recordId,
+    record: { status_custom_bills: status },
+  });
 }
 
 /** Link to the record's summary page in the Facilio product. */
@@ -131,6 +164,7 @@ function devPage(): CmmsBillsPage {
     fromEmail: 'krishna.k@facilio.com',
     description: 'Vendor bill triaged automatically from the Outlook mailbox.',
     status: 'open',
+    billStatus: 'Yet To Triage',
     attachment: file ? { fileId: 72480323, fileName: file, fileSize: 2938, fileContentType: 'application/pdf' } : null,
   });
   return {

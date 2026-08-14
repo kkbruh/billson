@@ -1,10 +1,13 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import {
+  BILL_STATUS,
   fetchBillFile,
   getLastPull,
+  isActionableStatus,
   listCmmsBills,
   pullEmails,
   recordUrl,
+  setBillStatus,
   type CmmsBill,
   type CmmsBillsPage,
 } from '../lib/cmmsBills';
@@ -59,6 +62,10 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
 
   const [lastPull, setLastPull] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
+
+  // Default view hides bills that have moved on in their lifecycle (durable, from
+  // the Facilio status), not just this session.
+  const [showAll, setShowAll] = useState(false);
 
   const load = useCallback(async (term: string) => {
     setLoading(true);
@@ -142,7 +149,12 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
   };
 
   const total = data.count ?? data.bills.length;
-  const pending = data.bills.filter((b) => b.attachment && !addedIds.has(b.id));
+  // Actionable = still needs work (Facilio status untouched) and not already queued
+  // this session. "Show all" reveals the rest.
+  const visible = showAll
+    ? data.bills
+    : data.bills.filter((b) => isActionableStatus(b.billStatus) && !addedIds.has(b.id));
+  const pending = visible.filter((b) => b.attachment && !addedIds.has(b.id));
 
   const addOne = async (b: CmmsBill) => {
     if (!b.attachment || addedIds.has(b.id)) return;
@@ -151,6 +163,13 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
     try {
       const { file } = await fetchBillFile(b.id, b.attachment.fileName);
       onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`, b.id);
+      // Durably mark it "Under Review" in Facilio so it drops off the list for
+      // everyone — not just this browser. Non-fatal if the write fails.
+      try {
+        await setBillStatus(b.id, BILL_STATUS.underReview);
+      } catch {
+        /* status write failed — the item is still queued locally */
+      }
       setNotice(`Added “${b.attachment.fileName}” to the Bills Inbox.`);
     } catch (err) {
       setError(errorMessage(err));
@@ -186,6 +205,11 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
         try {
           const { file } = await fetchBillFile(b.id, b.attachment!.fileName);
           onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`, b.id);
+          try {
+            await setBillStatus(b.id, BILL_STATUS.underReview);
+          } catch {
+            /* status write failed — item still queued locally */
+          }
           done += 1;
         } catch {
           failed += 1;
@@ -230,8 +254,20 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
             {pulling ? ' Pulling…' : 'Pull emails'}
           </button>
           <span className="bi-tablefoot__count">
-            {loading ? 'Loading…' : `${total} record${total === 1 ? '' : 's'}`}
+            {loading
+              ? 'Loading…'
+              : showAll
+                ? `${total} record${total === 1 ? '' : 's'}`
+                : `${visible.length} to action · ${total} total`}
           </span>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => setShowAll((v) => !v)}
+            title={showAll ? 'Show only bills that still need action' : 'Show every record, actioned or not'}
+          >
+            {showAll ? 'Actionable only' : 'Show all'}
+          </button>
           <button
             type="button"
             className="btn btn--accent"
@@ -270,9 +306,13 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
       )}
 
       <div className="bi-tablecard">
-        {!error && !loading && data.bills.length === 0 ? (
+        {!error && !loading && visible.length === 0 ? (
           <div className="bi-empty">
-            {search ? `No records match “${search}”.` : 'No bill records in the module yet.'}
+            {search
+              ? `No records match “${search}”.`
+              : data.bills.length > 0
+                ? 'All caught up — every bill has been actioned. Use “Show all” to see them.'
+                : 'No bill records in the module yet.'}
           </div>
         ) : (
           <div className="bi-tablescroll">
@@ -290,7 +330,7 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
                 </tr>
               </thead>
               <tbody>
-                {data.bills.map((b: CmmsBill) => {
+                {visible.map((b: CmmsBill) => {
                   const open = expandedId === b.id;
                   const added = addedIds.has(b.id);
                   const adding = busyAddId === b.id;
