@@ -149,12 +149,19 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
   };
 
   const total = data.count ?? data.bills.length;
-  // Actionable = still needs work (Facilio status untouched) and not already queued
-  // this session. "Show all" reveals the rest.
-  const visible = showAll
-    ? data.bills
-    : data.bills.filter((b) => isActionableStatus(b.billStatus) && !addedIds.has(b.id));
-  const pending = visible.filter((b) => b.attachment && !addedIds.has(b.id));
+  // Visibility is driven purely by the durable Facilio status — NOT local session
+  // state — so every browser/user sees the same buckets. Actionable = the status
+  // is still untouched (empty / "Yet To Triage"). "Show all" reveals the rest.
+  const visible = showAll ? data.bills : data.bills.filter((b) => isActionableStatus(b.billStatus));
+  const pending = visible.filter((b) => b.attachment);
+
+  /** Optimistically reflect a status write locally so the row leaves the actionable
+   *  bucket immediately (the durable source is still Facilio on the next load). */
+  const markStatusLocal = (id: number, label: string) =>
+    setData((d) => ({
+      ...d,
+      bills: d.bills.map((x) => (x.id === id ? { ...x, billStatus: label } : x)),
+    }));
 
   const addOne = async (b: CmmsBill) => {
     if (!b.attachment || addedIds.has(b.id)) return;
@@ -167,6 +174,7 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
       // everyone — not just this browser. Non-fatal if the write fails.
       try {
         await setBillStatus(b.id, BILL_STATUS.underReview);
+        markStatusLocal(b.id, 'Under Review');
       } catch {
         /* status write failed — the item is still queued locally */
       }
@@ -185,7 +193,7 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
    * re-run only picks up what's genuinely new.
    */
   const addAll = async () => {
-    const targets = data.bills.filter((b) => b.attachment && !addedIds.has(b.id));
+    const targets = data.bills.filter((b) => b.attachment && isActionableStatus(b.billStatus));
     if (targets.length === 0) {
       setNotice('Nothing new to add — every attachment is already queued in the Inbox.');
       return;
@@ -207,6 +215,7 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
           onSendToInbox(file, `CMMS · ${b.name ?? 'bill'}`, b.id);
           try {
             await setBillStatus(b.id, BILL_STATUS.underReview);
+            markStatusLocal(b.id, 'Under Review');
           } catch {
             /* status write failed — item still queued locally */
           }
@@ -332,7 +341,8 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
               <tbody>
                 {visible.map((b: CmmsBill) => {
                   const open = expandedId === b.id;
-                  const added = addedIds.has(b.id);
+                  // "Handled" is derived from the durable Facilio status, not local state.
+                  const handled = !isActionableStatus(b.billStatus);
                   const adding = busyAddId === b.id;
                   return (
                     <Fragment key={b.id}>
@@ -347,8 +357,10 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
                         </td>
                         <td>
                           <span className="bi-source">
-                            <span className="fds-dot fds-dot--neutral" />
-                            {b.status ?? '—'}
+                            <span
+                              className={`fds-dot ${handled ? 'fds-dot--info' : 'fds-dot--neutral'}`}
+                            />
+                            {b.billStatus ?? 'Yet To Triage'}
                           </span>
                         </td>
                         <td>{b.vendor ?? <span className="bi-muted">—</span>}</td>
@@ -367,8 +379,8 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
                         <td className="bi-num" onClick={(e) => e.stopPropagation()}>
                           <div className="bi-cmms-actions">
                             {b.attachment &&
-                              (added ? (
-                                <span className="bi-tag bi-tag--green">✓ In Inbox</span>
+                              (handled ? (
+                                <span className="bi-tag bi-tag--neutral">{b.billStatus}</span>
                               ) : (
                                 <button
                                   type="button"
@@ -432,7 +444,7 @@ export function CmmsBillsScreen({ onSendToInbox, onGoToInbox, addedIds }: Props)
                                 </dl>
                                 {b.attachment && (
                                   <div className="bi-cmms-actions">
-                                    {added ? (
+                                    {handled ? (
                                       <button type="button" className="btn" onClick={onGoToInbox}>
                                         Open in Inbox →
                                       </button>
