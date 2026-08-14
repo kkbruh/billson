@@ -140,6 +140,48 @@ export async function devParseBillFile(file: File): Promise<DevParseResult> {
   return { bill, fileId: 9000 + counter, fileName: file.name };
 }
 
+/**
+ * A handful of saved bills so the Review queue and its detail view are fully
+ * explorable from `npm run dev` — mirrors the pattern the Integrations and CMMS
+ * screens already use. Dropped from production builds.
+ */
+export function devListBills(search: string): { bills: SavedBill[]; total: number } {
+  const now = new Date().toISOString();
+  const mk = (
+    id: string,
+    over: Partial<ExtractedBill>,
+    status: SavedBill['status'],
+    fileName: string,
+  ): SavedBill => ({
+    ...BASE,
+    ...over,
+    provenance: PROVENANCE,
+    id,
+    file_id: '0',
+    file_name: fileName,
+    status,
+    reviewed_by: null,
+    created_at: now,
+    updated_at: now,
+  });
+
+  const all: SavedBill[] = [
+    mk('dev_1', { ...FIXTURES[1].bill }, 'flagged', 'burnsville-july.pdf'),
+    mk('dev_2', { ...FIXTURES[3].bill }, 'parsed', 'burnsville-september.pdf'),
+    mk('dev_3', {}, 'confirmed', 'burnsville-august.pdf'),
+  ];
+
+  const q = search.trim().toLowerCase();
+  const bills = q
+    ? all.filter((b) =>
+        [b.vendor_name, b.account_number, b.invoice_number, b.meter_number, b.file_name].some(
+          (v) => v && v.toLowerCase().includes(q),
+        ),
+      )
+    : all;
+  return { bills, total: bills.length };
+}
+
 /** Pretend the register accepted the row, so the UI can continue in dev. */
 export async function devSaveBill(bill: Partial<SavedBill>): Promise<SavedBill> {
   await wait(120);

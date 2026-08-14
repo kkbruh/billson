@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ExtractedBill, Provenance, SavedBill } from '../types';
-import { LIFECYCLE, type LifecycleState, type QueueState } from '../lib/lifecycle';
 import { loadStoredPreview } from '../lib/api';
-import { ParseWorkspace, type WorkItem } from './ParseWorkspace';
-import { BillForm } from './BillForm';
+import { ReviewDetail } from './ReviewDetail';
+import samplePdf from '../assets/samples/burnsville-july.pdf?url';
 
 interface Props {
   bills: SavedBill[];
@@ -13,22 +12,31 @@ interface Props {
   search: string;
   onSearch: (term: string) => void;
   onSave: (bill: ExtractedBill, id: string) => Promise<void>;
-  onDelete: (bill: SavedBill) => void;
+  onConfirm: (bill: SavedBill) => void;
+  onSendToQueue: (bill: SavedBill) => void;
+  onReject: (bill: SavedBill) => void;
   onExport: () => void;
   onRefresh: () => void;
   busyId: string | null;
 }
 
-/** Register status → the spec's lifecycle vocabulary. */
-function lifecycleOf(bill: SavedBill): LifecycleState {
-  if (bill.status === 'flagged') return 'needs_attention';
-  if (bill.status === 'confirmed') return 'parsed_mapped';
-  return 'awaiting_review';
+function money(n: number | null, currency: string | null): string {
+  if (n === null) return '—';
+  const s = n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return currency ? `${currency} ${s}` : `$${s}`;
 }
 
-/** Queue glyph for the left column: a flagged bill still wants a human. */
-function queueStateOf(bill: SavedBill): QueueState {
-  return bill.status === 'flagged' ? 'failed' : 'done';
+function statusTag(status: SavedBill['status']): { label: string; cls: string } {
+  if (status === 'confirmed') return { label: 'Parsed & mapped', cls: 'bi-tag--green' };
+  if (status === 'flagged') return { label: 'Needs attention', cls: 'bi-tag--amber' };
+  return { label: 'Awaiting review', cls: 'bi-tag--blue' };
+}
+
+function confTag(c: SavedBill['confidence']): { label: string; cls: string } {
+  if (c === 'high') return { label: 'High', cls: 'bi-tag--green' };
+  if (c === 'medium') return { label: 'Medium', cls: 'bi-tag--amber' };
+  if (c === 'low') return { label: 'Low', cls: 'bi-tag--red' };
+  return { label: '—', cls: 'bi-tag--neutral' };
 }
 
 export function ReviewScreen({
@@ -38,52 +46,46 @@ export function ReviewScreen({
   search,
   onSearch,
   onSave,
-  onDelete,
+  onConfirm,
+  onSendToQueue,
+  onReject,
   onExport,
   onRefresh,
   busyId,
 }: Props) {
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState<ExtractedBill | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [openId, setOpenId] = useState<string | null>(null);
 
+  // The opened bill must still exist after a refresh; otherwise fall back to list.
   useEffect(() => {
-    if (bills.length === 0) {
-      setSelectedId(null);
-      return;
-    }
-    if (!selectedId || !bills.some((b) => b.id === selectedId)) {
-      setSelectedId(bills[0].id);
-      setEditing(false);
-    }
-  }, [bills, selectedId]);
+    if (openId && !bills.some((b) => b.id === openId)) setOpenId(null);
+  }, [bills, openId]);
 
   const selected = useMemo(
-    () => bills.find((b) => b.id === selectedId) ?? null,
-    [bills, selectedId],
+    () => bills.find((b) => b.id === openId) ?? null,
+    [bills, openId],
   );
 
-  /**
-   * The source document lives in the app's file store, so it's fetched on demand
-   * for whichever bill is selected — only one at a time, and revoked when it
-   * changes so blobs don't accumulate.
-   */
+  // ── source document, fetched only for the opened bill ──────────────────────
   const [preview, setPreview] = useState<{ url: string; type: string } | null>(null);
   const previewRef = useRef<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-
     const revoke = () => {
       if (previewRef.current) {
         URL.revokeObjectURL(previewRef.current);
         previewRef.current = null;
       }
     };
-
     revoke();
     setPreview(null);
+
+    // Local dev can't download from the app file store; show a bundled sample so
+    // the doc pane is explorable. Dead code in production.
+    if (import.meta.env.DEV) {
+      if (selected) setPreview({ url: samplePdf, type: 'application/pdf' });
+      return;
+    }
 
     const fileId = selected?.file_id ? Number(selected.file_id) : NaN;
     if (!Number.isFinite(fileId)) return;
@@ -98,160 +100,157 @@ export function ReviewScreen({
         setPreview(p);
       }
     });
-
     return () => {
       cancelled = true;
       revoke();
     };
   }, [selected?.file_id]);
 
-  const workItems: WorkItem[] = useMemo(
-    () =>
-      bills.map((b) => ({
-        key: b.id,
-        name: b.file_name ?? b.vendor_name ?? 'Bill',
-        queueState: queueStateOf(b),
-        bill: { ...b, provenance: provenanceById[b.id] ?? [] },
-        // Only the selected bill's document is fetched, so only it can preview.
-        previewUrl: b.id === selectedId ? (preview?.url ?? null) : null,
-        previewType: b.id === selectedId ? (preview?.type ?? null) : null,
-        error: b.status === 'flagged' ? (b.notes ?? 'Needs attention') : null,
-      })),
-    [bills, selectedId, preview, provenanceById],
-  );
+  // ── detail view ────────────────────────────────────────────────────────────
+  if (selected) {
+    return (
+      <ReviewDetail
+        bill={selected}
+        provenance={provenanceById[selected.id] ?? selected.provenance ?? []}
+        preview={preview}
+        onBack={() => setOpenId(null)}
+        onSave={onSave}
+        onConfirm={(b) => {
+          onConfirm(b);
+          setOpenId(null);
+        }}
+        onSendToQueue={(b) => {
+          onSendToQueue(b);
+          setOpenId(null);
+        }}
+        onReject={(b) => {
+          onReject(b);
+          setOpenId(null);
+        }}
+        busy={busyId === selected.id}
+      />
+    );
+  }
 
-  const commit = async () => {
-    if (!draft || !selected) return;
-    setSaving(true);
-    try {
-      await onSave(draft, selected.id);
-      setEditing(false);
-      setDraft(null);
-    } finally {
-      setSaving(false);
-    }
-  };
-
+  // ── queue list ─────────────────────────────────────────────────────────────
   return (
     <>
-      <div className="fds-widget">
-        <div className="fds-widget__header">
-          <span className="fds-widget__title">Review</span>
-          <span className="fds-widget__range">
-            {loading
-              ? 'Loading…'
-              : `${bills.length} parsed bill${bills.length === 1 ? '' : 's'}`}
-          </span>
+      <div className="bi-toolbar">
+        <div className="bi-search" style={{ maxWidth: 320 }}>
+          <span
+            className="bi-search__icon"
+            style={{
+              maskImage: 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'black\' stroke-width=\'2\'><circle cx=\'11\' cy=\'11\' r=\'7\'/><path d=\'M21 21l-4-4\'/></svg>")',
+              WebkitMaskImage:
+                'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' viewBox=\'0 0 24 24\' fill=\'none\' stroke=\'black\' stroke-width=\'2\'><circle cx=\'11\' cy=\'11\' r=\'7\'/><path d=\'M21 21l-4-4\'/></svg>")',
+            }}
+          />
+          <input
+            className="input"
+            type="search"
+            placeholder="Search vendor, account, invoice, meter…"
+            value={search}
+            onChange={(e) => onSearch(e.target.value)}
+            aria-label="Search bills"
+          />
         </div>
-        <div className="fds-widget__body">
-          <div className="row">
-            <input
-              className="input input--search"
-              type="search"
-              placeholder="Search vendor, account, invoice, meter…"
-              value={search}
-              onChange={(e) => onSearch(e.target.value)}
-              aria-label="Search bills"
-            />
-            <span className="app__spacer" />
-            <button type="button" className="btn" disabled={bills.length === 0} onClick={onExport}>
-              Export CSV
-            </button>
-            <button type="button" className="btn" onClick={onRefresh}>
-              Refresh
-            </button>
-          </div>
+        <div className="bi-toolbar__end">
+          <button type="button" className="btn" disabled={bills.length === 0} onClick={onExport}>
+            Export CSV
+          </button>
+          <button type="button" className="btn" onClick={onRefresh}>
+            Refresh
+          </button>
         </div>
       </div>
 
-      {bills.length === 0 ? (
-        <div className="fds-widget">
-          <div className="fds-widget__body">
-            <div className="empty">
-              <div className="empty__text">
-                {search
-                  ? `Nothing matches “${search}”.`
-                  : 'Nothing to review yet. Parse a bill from the Inbox.'}
-              </div>
-            </div>
-          </div>
+      <div className="bi-tablecard">
+        <div className="bi-tablescroll">
+          <table className="bi-table">
+            <thead>
+              <tr>
+                <th>Vendor / file</th>
+                <th>Service</th>
+                <th>Account</th>
+                <th>Period</th>
+                <th className="bi-num">Amount</th>
+                <th>Confidence</th>
+                <th>Status</th>
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {bills.length === 0 ? (
+                <tr>
+                  <td colSpan={8}>
+                    <div className="bi-empty">
+                      {loading
+                        ? 'Loading…'
+                        : search
+                          ? `Nothing matches “${search}”.`
+                          : 'Nothing to review yet. Parse a bill from the Inbox.'}
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                bills.map((b) => {
+                  const st = statusTag(b.status);
+                  const ct = confTag(b.confidence);
+                  return (
+                    <tr
+                      key={b.id}
+                      className="bi-cmms-row"
+                      onClick={() => setOpenId(b.id)}
+                    >
+                      <td>
+                        <div className="bi-cell-2">
+                          <span className="bi-file__name">{b.vendor_name ?? 'Unknown vendor'}</span>
+                          <span className="bi-cell-2__sub">{b.file_name ?? '—'}</span>
+                        </div>
+                      </td>
+                      <td className="bi-muted">{b.utility_type ?? '—'}</td>
+                      <td className="bi-muted">{b.account_number ?? '—'}</td>
+                      <td className="bi-muted">
+                        {b.billing_period_start
+                          ? `${b.billing_period_start}${b.billing_period_end ? ` → ${b.billing_period_end}` : ''}`
+                          : '—'}
+                      </td>
+                      <td className="bi-num bi-mono">{money(b.total_amount, b.currency)}</td>
+                      <td>
+                        <span className={`bi-tag ${ct.cls}`}>{ct.label}</span>
+                      </td>
+                      <td>
+                        <span className={`bi-tag ${st.cls}`}>{st.label}</span>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="btn btn--sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setOpenId(b.id);
+                          }}
+                        >
+                          Review
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
-      ) : editing && draft && selected ? (
-        <div className="fds-widget">
-          <div className="fds-widget__header">
-            <span className="fds-widget__title">
-              Editing {selected.vendor_name ?? 'bill'}
+        {bills.length > 0 && (
+          <div className="bi-tablefoot">
+            <span className="bi-tablefoot__count">
+              {bills.length} bill{bills.length === 1 ? '' : 's'} in the register
             </span>
-            <span className="fds-widget__range">{selected.file_name ?? '—'}</span>
           </div>
-          <div className="fds-widget__body">
-            <BillForm bill={draft} onChange={setDraft} disabled={saving} />
-            <div className="band">
-              <button
-                type="button"
-                className="btn btn--primary"
-                disabled={saving}
-                onClick={() => void commit()}
-              >
-                {saving && <span className="btn__spinner" aria-hidden="true" />}
-                Save changes
-              </button>
-              <button
-                type="button"
-                className="btn btn--ghost"
-                disabled={saving}
-                onClick={() => {
-                  setEditing(false);
-                  setDraft(null);
-                }}
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <ParseWorkspace
-          items={workItems}
-          selectedKey={selectedId}
-          onSelect={(key) => {
-            setSelectedId(key);
-            setEditing(false);
-          }}
-          title="Parsed bills"
-          subtitle={`${bills.length} in register`}
-          animateMapping={false}
-          footer={
-            selected ? (
-              <>
-                <span className="status">
-                  <span className={`fds-dot ${LIFECYCLE[lifecycleOf(selected)].dot}`} />
-                  {LIFECYCLE[lifecycleOf(selected)].label}
-                </span>
-                <span className="app__spacer" />
-                <button
-                  type="button"
-                  className="btn btn--primary"
-                  onClick={() => {
-                    setDraft({ ...selected });
-                    setEditing(true);
-                  }}
-                >
-                  Edit fields
-                </button>
-                <button
-                  type="button"
-                  className="btn btn--ghost btn--danger"
-                  disabled={busyId === selected.id}
-                  onClick={() => onDelete(selected)}
-                >
-                  {busyId === selected.id ? 'Removing…' : 'Remove'}
-                </button>
-              </>
-            ) : null
-          }
-        />
-      )}
+        )}
+      </div>
     </>
   );
 }

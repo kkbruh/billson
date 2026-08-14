@@ -324,6 +324,20 @@ export default function App() {
     }
   };
 
+  /** Persist a status change from the Review detail (confirm / send back to queue). */
+  const setStatus = async (bill: SavedBill, status: SavedBill['status'], msg: string) => {
+    setBusyId(bill.id);
+    try {
+      await saveBill({ ...bill, status, reviewed_by: user?.email ?? null }, bill.id);
+      await refresh(search);
+      setToast(msg);
+    } catch (err) {
+      setListError(errorMessage(err));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const badges = useMemo(
     () => ({
       // Inbox badge = bills waiting to be parsed (or needing a retry).
@@ -443,7 +457,9 @@ export default function App() {
               search={search}
               onSearch={setSearch}
               onSave={handleSave}
-              onDelete={(b) => void handleDelete(b)}
+              onConfirm={(b) => void setStatus(b, 'confirmed', 'Confirmed & mapped.')}
+              onSendToQueue={(b) => void setStatus(b, 'flagged', 'Sent to the review queue.')}
+              onReject={(b) => void handleDelete(b)}
               onExport={() =>
                 downloadCsv(bills, `bills-${new Date().toISOString().slice(0, 10)}.csv`)
               }

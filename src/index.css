@@ -3102,6 +3102,367 @@ textarea {
   grid-column: 1 / -1;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   Review detail — two-pane doc viewer + mapped fields (Figma "Bills / Detail")
+   ══════════════════════════════════════════════════════════════════════════ */
+.bi-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sectionXSmall);
+  min-width: 0;
+}
+
+.bi-detail__crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerXLarge);
+  color: var(--colors-textCaption);
+  font-size: 13px;
+}
+
+.bi-detail__crumb .bi-muted {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bi-detail__cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--spacing-sectionXSmall);
+  align-items: start;
+}
+
+@media (max-width: 1080px) {
+  .bi-detail__cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ── left: document ───────────────────────────────────────────────────────── */
+.bi-doc {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+  overflow: hidden;
+  background: var(--colors-backgroundContainer);
+  min-height: 540px;
+}
+
+.bi-doc__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerLarge);
+  padding: var(--spacing-containerLarge) var(--spacing-containerXLarge);
+  background: var(--bi-rail-bg);
+  border-bottom: 1px solid var(--bi-rail-border);
+}
+
+.bi-doc__zoom,
+.bi-doc__pager {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-doc__btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--bi-rail-border);
+  border-radius: var(--border-high);
+  background: var(--bi-rail-elev);
+  color: var(--bi-rail-text-strong);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.bi-doc__btn:hover:not(:disabled) {
+  background: var(--bi-rail-hover);
+}
+
+.bi-doc__btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.bi-doc__pageno {
+  font-size: 13px;
+  color: var(--bi-rail-text-strong);
+  min-width: 92px;
+  text-align: center;
+}
+
+.bi-doc__body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--spacing-sectionSmall);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  background: var(--colors-backgroundMidgroundSubtle);
+}
+
+.bi-doc__body:fullscreen {
+  background: #0c1119;
+  align-items: center;
+}
+
+.bi-doc__img {
+  max-width: 100%;
+  height: auto;
+  background: #fff;
+  box-shadow: var(--elevation-lightMed);
+}
+
+.bi-doc__text {
+  width: 100%;
+  margin: 0;
+  padding: var(--spacing-containerXxLarge);
+  background: #fff;
+  color: #111;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  border-radius: var(--border-high);
+  box-shadow: var(--elevation-lightMed);
+}
+
+.bi-doc__empty {
+  color: var(--colors-textCaption);
+  font-size: 14px;
+  text-align: center;
+  max-width: 320px;
+  margin: auto;
+}
+
+/* pdf canvas gets a page-like surface */
+.bi-doc__body .viewer__canvas {
+  background: #fff;
+  box-shadow: var(--elevation-lightMed);
+  border-radius: 2px;
+}
+
+/* ── right: parsed / mapped ───────────────────────────────────────────────── */
+.bi-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-containerXLarge);
+  min-width: 0;
+}
+
+.bi-side__head {
+  background: var(--colors-backgroundContainer);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+  padding: var(--spacing-containerXxLarge);
+  display: grid;
+  gap: var(--spacing-containerXLarge);
+}
+
+.bi-side__headtop {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-containerXLarge);
+}
+
+.bi-side__title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--colors-textMain);
+  line-height: 1.35;
+}
+
+.bi-side__sub {
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--colors-textCaption);
+}
+
+.bi-side__route {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+  padding-top: var(--spacing-containerXLarge);
+  border-top: 1px solid var(--colors-borderNeutralBaseSubtler);
+  font-size: 13px;
+  color: var(--colors-textDescription);
+}
+
+.bi-side__gear {
+  color: var(--bi-accent-text);
+}
+
+/* ── service tabs ─────────────────────────────────────────────────────────── */
+.bi-utabs {
+  display: flex;
+  gap: var(--spacing-containerMedium);
+  padding: var(--spacing-containerMedium);
+  background: var(--colors-backgroundMidgroundSubtle);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+}
+
+.bi-utab {
+  flex: 1;
+  appearance: none;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--border-high);
+  background: transparent;
+  color: var(--colors-textCaption);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: default;
+}
+
+.bi-utab--active {
+  background: var(--bi-accent);
+  color: var(--bi-on-accent);
+}
+
+/* ── mapped fields ────────────────────────────────────────────────────────── */
+.bi-fields {
+  background: var(--colors-backgroundContainer);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-large);
+  padding: var(--spacing-containerXxLarge);
+  display: grid;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-fields__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerLarge);
+}
+
+.bi-fields__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--colors-textMain);
+}
+
+.bi-fields__subhead {
+  margin-top: var(--spacing-containerLarge);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  color: var(--colors-textCaption);
+}
+
+.bi-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerXLarge);
+  padding: var(--spacing-containerXLarge);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-high);
+  background: var(--colors-backgroundMidgroundSubtle);
+}
+
+.bi-field__main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.bi-field__label {
+  font-size: 12px;
+  color: var(--colors-textCaption);
+}
+
+.bi-field__value {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--colors-textMain);
+  word-break: break-word;
+}
+
+.bi-field__input {
+  max-width: 260px;
+  padding: 5px 9px;
+  font-size: 14px;
+}
+
+.bi-field__side {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+  flex-shrink: 0;
+}
+
+.bi-field__edit {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-high);
+  background: var(--colors-backgroundContainer);
+  color: var(--colors-iconNeutralLight);
+  cursor: pointer;
+  font-size: 13px;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+
+.bi-field__edit:hover {
+  color: var(--bi-accent-text);
+  border-color: var(--bi-accent);
+}
+
+/* ── allocation ───────────────────────────────────────────────────────────── */
+.bi-alloc {
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-high);
+  overflow: hidden;
+}
+
+.bi-alloc__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerXLarge);
+  padding: 10px var(--spacing-containerXLarge);
+  font-size: 13px;
+  color: var(--colors-textDescription);
+  border-bottom: 1px solid var(--colors-borderNeutralBaseSubtler);
+}
+
+.bi-alloc__row:last-child {
+  border-bottom: none;
+}
+
+.bi-alloc__row--total {
+  background: var(--colors-backgroundMidgroundSubtle);
+  color: var(--colors-textMain);
+  font-weight: 600;
+}
+
+/* ── action bar ───────────────────────────────────────────────────────────── */
+.bi-detail__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-containerLarge);
+  padding-top: var(--spacing-containerLarge);
+}
+
+/* small button variant (queue "Review", inline "Save changes") */
+.btn--sm {
+  padding: 5px 12px;
+  font-size: 13px;
+}
+
 /* ── CMMS Bills: expanded row with inline PDF preview ─────────────────────── */
 .bi-cmms-expand {
   display: grid;

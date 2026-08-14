@@ -1,7 +1,7 @@
 import { VibeError } from '@facilio/vibe-sdk';
 import { vibe } from '../vibe';
 import type { ExtractedBill, Provenance, SavedBill } from '../types';
-import { devParseBillFile, devSaveBill } from './devParse';
+import { devListBills, devParseBillFile, devSaveBill } from './devParse';
 
 const FUNCTION = 'bills';
 const AGENT = 'bill-extractor';
@@ -101,6 +101,7 @@ export async function listBills(
   search: string,
   limit = 200,
 ): Promise<{ bills: SavedBill[]; total: number }> {
+  if (import.meta.env.DEV) return devListBills(search);
   const res = await vibe.executeFunction<{
     bills: Record<string, unknown>[];
     total: number;
@@ -112,6 +113,17 @@ export async function listBills(
 }
 
 export async function getStats(): Promise<BillStats> {
+  if (import.meta.env.DEV) {
+    return {
+      total_bills: 3,
+      confirmed: 1,
+      flagged: 1,
+      awaiting_review: 1,
+      total_amount: 49_708.62,
+      accounts: 1,
+      last_parsed_at: new Date().toISOString(),
+    };
+  }
   const res = await vibe.executeFunction<Record<string, unknown>>(
     FUNCTION,
     'get-stats',
