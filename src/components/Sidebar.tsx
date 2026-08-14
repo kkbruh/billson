@@ -22,14 +22,12 @@ interface NavDef {
 export const NAV: NavDef[] = [
   { key: 'dashboard', label: 'Home/Dashboard', icon: 'dashboard' },
   // Pipeline order: bills land in the CMMS module → pulled into the Inbox to
-  // parse → routed to the Review Queue.
+  // parse → routed to the Review Queue. (Reports live inside the Dashboard;
+  // Templates + Sources & Integrations live under Settings.)
   { key: 'cmms', label: 'CMMS Bills', icon: 'cmms' },
   { key: 'inbox', label: 'Bills Inbox', icon: 'inbox' },
   { key: 'review', label: 'Review Queue', icon: 'review' },
-  { key: 'sources', label: 'Sources & Integrations', icon: 'sources' },
-  { key: 'templates', label: 'Templates', icon: 'templates' },
   { key: 'clients', label: 'Clients & Providers', icon: 'clients' },
-  { key: 'reports', label: 'Reports', icon: 'reports' },
 ];
 
 /** Labels used elsewhere (topbar title) so the two never drift. */

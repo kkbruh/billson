@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import type { BillStats } from '../lib/api';
 import type { SavedBill } from '../types';
 import { LIFECYCLE } from '../lib/lifecycle';
+import { downloadCsv } from '../lib/csv';
 
 interface Props {
   stats: BillStats | null;
@@ -246,6 +247,40 @@ export function StatsScreen({ stats, bills, onGoToParse, onGoToInbox }: Props) {
                 </tbody>
               </table>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* reports — consolidated here rather than a separate tab */}
+      <div>
+        <div className="fds-section-head">
+          <span className="fds-section-head__label">Reports</span>
+          <span className="fds-section-head__rule" />
+        </div>
+        <div className="fds-widget">
+          <div className="fds-widget__body">
+            <div className="bi-report-row">
+              <div>
+                <div className="fds-widget__title">Bill register export</div>
+                <p className="muted" style={{ margin: '4px 0 0' }}>
+                  Every parsed bill and its mapped fields, as CSV — for finance or an external system.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn"
+                disabled={bills.length === 0}
+                onClick={() =>
+                  downloadCsv(bills, `bills-${new Date().toISOString().slice(0, 10)}.csv`)
+                }
+              >
+                Export register (CSV)
+              </button>
+            </div>
+            <p className="muted" style={{ margin: 0 }}>
+              The spend-by-month and by-service breakdowns above are the live reports; scheduled
+              email exports come next.
+            </p>
           </div>
         </div>
       </div>

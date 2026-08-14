@@ -20,7 +20,7 @@ import { Placeholder } from './components/Placeholder';
 import { InboxScreen, type InboxItem } from './components/InboxScreen';
 import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
-import { IntegrationsScreen } from './components/IntegrationsScreen';
+import { SettingsScreen } from './components/SettingsScreen';
 import { CmmsBillsScreen } from './components/CmmsBillsScreen';
 import { Onboarding } from './components/Onboarding';
 import { fetchBillFile } from './lib/cmmsBills';
@@ -503,36 +503,15 @@ export default function App() {
             />
           )}
 
-          {nav === 'sources' && <IntegrationsScreen />}
-
-          {nav === 'reports' && (
-            <Placeholder
-              icon="reports"
-              title="Reports"
-              blurb="Scheduled exports and spend reports will live here. Cost analytics are on the Home dashboard for now."
-            />
-          )}
-          {nav === 'templates' && (
-            <Placeholder
-              icon="templates"
-              title="Templates"
-              blurb="Per-vendor extraction templates that lock field positions for known bill layouts. Not built yet — every bill is read by the AI extractor today."
-            />
-          )}
           {nav === 'clients' && (
             <Placeholder
               icon="clients"
               title="Clients & Providers"
-              blurb="A directory of clients and utility providers to attribute each bill to. Not modelled yet — bills carry the parsed provider name only."
+              blurb="A directory of clients and providers to attribute each bill to — and to resolve the vendor/contact id when pushing to Xero, QuickBooks or NetSuite. Not modelled yet; bills carry the parsed provider name only."
             />
           )}
-          {nav === 'settings' && (
-            <Placeholder
-              icon="settings"
-              title="Settings"
-              blurb="Org preferences, extraction defaults and roles will live here."
-            />
-          )}
+
+          {nav === 'settings' && <SettingsScreen />}
         </div>
       </main>
 

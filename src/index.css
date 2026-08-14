@@ -3699,3 +3699,21 @@ textarea {
   display: flex;
   justify-content: flex-end;
 }
+
+/* ── Settings hub + Dashboard reports ────────────────────────────────────── */
+.bi-settings {
+  display: grid;
+  gap: var(--spacing-sectionSmall);
+}
+.bi-settings__panel {
+  display: grid;
+  gap: var(--spacing-sectionXSmall);
+}
+.bi-report-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-containerLarge);
+  flex-wrap: wrap;
+  margin-bottom: var(--spacing-containerLarge);
+}
