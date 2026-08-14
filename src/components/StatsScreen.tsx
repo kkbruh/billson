@@ -63,8 +63,41 @@ export function StatsScreen({ stats, bills, onGoToParse, onGoToInbox }: Props) {
   const awaiting = stats?.awaiting_review ?? 0;
   const flagged = stats?.flagged ?? 0;
 
+  // ROI framing: manual keying of one utility bill (vendor, account, dates,
+  // amounts, line items) is ~6 min. Stated openly so the number is defensible.
+  const MIN_PER_BILL = 6;
+  const billsDone = stats?.total_bills ?? bills.length;
+  const minutesSaved = billsDone * MIN_PER_BILL;
+  const hoursSaved = minutesSaved / 60;
+
   return (
     <>
+      {/* ROI hero — the "why this matters" line, first thing you see */}
+      <div className="bi-roi" role="group" aria-label="Return on automation">
+        <div className="bi-roi__item">
+          <span className="bi-roi__value mono">{billsDone.toLocaleString()}</span>
+          <span className="bi-roi__label">bills digitized</span>
+        </div>
+        <span className="bi-roi__dot" aria-hidden="true" />
+        <div className="bi-roi__item">
+          <span className="bi-roi__value mono">{money(stats?.total_amount ?? 0, derived.currency)}</span>
+          <span className="bi-roi__label">value processed</span>
+        </div>
+        <span className="bi-roi__dot" aria-hidden="true" />
+        <div className="bi-roi__item">
+          <span className="bi-roi__value mono">
+            ~{hoursSaved >= 1 ? `${hoursSaved.toFixed(1)} hrs` : `${minutesSaved} min`}
+          </span>
+          <span className="bi-roi__label">manual entry saved</span>
+        </div>
+        <span className="bi-roi__dot" aria-hidden="true" />
+        <div className="bi-roi__item">
+          <span className="bi-roi__value mono">{derived.straightThrough}%</span>
+          <span className="bi-roi__label">straight-through</span>
+        </div>
+        <span className="bi-roi__note">≈ {MIN_PER_BILL} min/bill of manual keying avoided</span>
+      </div>
+
       {/* pending-action row — "what needs me?" */}
       <div>
         <div className="fds-section-head">

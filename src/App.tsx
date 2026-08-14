@@ -22,6 +22,7 @@ import { ReviewScreen } from './components/ReviewScreen';
 import { StatsScreen } from './components/StatsScreen';
 import { IntegrationsScreen } from './components/IntegrationsScreen';
 import { CmmsBillsScreen } from './components/CmmsBillsScreen';
+import { Onboarding } from './components/Onboarding';
 import { fetchBillFile } from './lib/cmmsBills';
 
 /** localStorage key for the durable pending CMMS queue (survives reloads). */
@@ -86,6 +87,23 @@ export default function App() {
 
   const [syncState, setSyncState] = useState<SyncState>('checking');
   const [toast, setToast] = useState<string | null>(null);
+
+  // First-run "how it works" — shown once per browser.
+  const [showOnboarding, setShowOnboarding] = useState(() => {
+    try {
+      return localStorage.getItem('billparser.onboarded') !== '1';
+    } catch {
+      return false;
+    }
+  });
+  const dismissOnboarding = () => {
+    try {
+      localStorage.setItem('billparser.onboarded', '1');
+    } catch {
+      /* non-fatal */
+    }
+    setShowOnboarding(false);
+  };
 
   // Owned here so the Inbox survives navigating between screens mid-run.
   const [inboxItems, setInboxItems] = useState<InboxItem[]>([]);
@@ -526,6 +544,8 @@ export default function App() {
           </button>
         </div>
       )}
+
+      {showOnboarding && <Onboarding onDismiss={dismissOnboarding} />}
     </div>
   );
 }

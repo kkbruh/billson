@@ -3564,3 +3564,138 @@ textarea {
   padding-top: var(--spacing-containerLarge);
   border-top: 1px solid var(--colors-borderNeutralBaseSubtler);
 }
+
+/* ── Dashboard ROI hero ──────────────────────────────────────────────────── */
+.bi-roi {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sectionXSmall);
+  flex-wrap: wrap;
+  padding: var(--spacing-containerXLarge) var(--spacing-containerXxLarge);
+  border-radius: var(--border-large);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  background: var(--colors-backgroundContainer);
+  border-left: 3px solid var(--colors-backgroundPrimaryDefault);
+}
+.bi-roi__item {
+  display: grid;
+  gap: 2px;
+}
+.bi-roi__value {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--colors-textMain);
+}
+.bi-roi__label {
+  font-size: var(--typography-captionReg12-fontSize);
+  color: var(--colors-textCaption);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+.bi-roi__dot {
+  width: 4px;
+  height: 4px;
+  border-radius: var(--border-full);
+  background: var(--colors-borderNeutralBaseLight);
+  flex-shrink: 0;
+}
+.bi-roi__note {
+  margin-left: auto;
+  font-size: var(--typography-captionReg12-fontSize);
+  color: var(--colors-textCaption);
+}
+
+/* ── First-run onboarding overlay ────────────────────────────────────────── */
+.bi-onb {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-sectionSmall);
+  background: rgba(0, 0, 0, 0.5);
+}
+.bi-onb__panel {
+  width: 100%;
+  max-width: 520px;
+  background: var(--colors-backgroundContainer);
+  border: 1px solid var(--colors-borderNeutralBaseSubtler);
+  border-radius: var(--border-xlarge);
+  padding: var(--spacing-sectionSmall);
+  display: grid;
+  gap: var(--spacing-containerXxLarge);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
+.bi-onb__head {
+  display: flex;
+  gap: var(--spacing-containerLarge);
+  align-items: center;
+}
+.bi-onb__mark {
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: var(--border-medium);
+  background: var(--colors-backgroundPrimaryDefault);
+  color: #fff;
+  font-weight: 700;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bi-onb__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--colors-textMain);
+}
+.bi-onb__sub {
+  margin: 2px 0 0;
+  font-size: var(--typography-bodyReg14-fontSize);
+  color: var(--colors-textCaption);
+}
+.bi-onb__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--spacing-containerXLarge);
+}
+.bi-onb__step {
+  display: flex;
+  gap: var(--spacing-containerLarge);
+  align-items: flex-start;
+}
+.bi-onb__num {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: var(--border-full);
+  background: var(--colors-backgroundMidgroundSubtle);
+  color: var(--colors-textMain);
+  font-weight: 700;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bi-onb__step-body {
+  display: grid;
+  gap: 2px;
+}
+.bi-onb__step-title {
+  font-weight: 600;
+  font-size: var(--typography-bodyReg14-fontSize);
+  color: var(--colors-textMain);
+}
+.bi-onb__step-text {
+  font-size: var(--typography-captionReg12-fontSize);
+  color: var(--colors-textCaption);
+}
+.bi-onb__foot {
+  display: flex;
+  justify-content: flex-end;
+}
