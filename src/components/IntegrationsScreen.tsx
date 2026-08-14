@@ -20,6 +20,19 @@ const STATUS_TAG: Record<IntegrationStatus, { label: string; tag: string; dot: s
   unavailable: { label: 'Unavailable', tag: 'bi-tag--red', dot: 'fds-dot--error' },
 };
 
+/** Lettermark for the card's icon square. */
+function initial(name: string): string {
+  const parts = name.split(/[\s/&·-]+/).filter(Boolean);
+  return (parts[0]?.[0] ?? '?').toUpperCase();
+}
+
+/** Deterministic pastel per connector, so each tile reads distinctly. */
+function iconStyle(kind: string) {
+  let h = 0;
+  for (const c of kind) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return { background: `hsl(${h} 62% 88%)`, color: `hsl(${h} 55% 30%)` };
+}
+
 function statusHint(row: IntegrationRow): string {
   switch (row.status) {
     case 'live':
@@ -93,43 +106,52 @@ function IntegrationCard({
   };
 
   return (
-    <div className="bi-conn-card">
-      <div className="bi-conn-card__head">
-        <div className="bi-conn-card__id">
-          <span className={`fds-dot ${ui.dot}`} />
-          <span className="bi-conn-card__name">{row.displayName}</span>
-          <span className={`bi-tag ${ui.tag}`}>{ui.label}</span>
-          {row.enabled && <span className="bi-tag bi-tag--neutral">Enabled</span>}
-        </div>
-
-        <div className="bi-conn-card__controls">
-          <label className="toggle" title={row.enabled ? 'Disable' : 'Enable'}>
-            <input
-              type="checkbox"
-              checked={row.enabled}
-              disabled={busy}
-              onChange={(e) => onToggle(row, e.target.checked)}
-            />
-            <span className="toggle__track">
-              <span className="toggle__thumb" />
+    <div className={`bi-conn-card${open ? ' bi-conn-card--open' : ''}`}>
+      <div className="bi-conn-card__top">
+        <span className="bi-conn-card__icon" style={iconStyle(row.kind)} aria-hidden="true">
+          {initial(row.displayName)}
+        </span>
+        <div className="bi-conn-card__meta">
+          <span className="bi-conn-card__name" title={row.displayName}>
+            {row.displayName}
+          </span>
+          <span className="bi-conn-card__tags">
+            <span className={`bi-tag ${ui.tag}`}>
+              <span className={`fds-dot ${ui.dot}`} />
+              {ui.label}
             </span>
-          </label>
-          <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => onTest(row)}>
-            {busy ? <span className="btn__spinner" aria-hidden="true" /> : 'Re-check'}
-          </button>
-          <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-            {open ? 'Close' : 'Configure'}
-          </button>
+            {row.enabled && <span className="bi-tag bi-tag--neutral">Enabled</span>}
+          </span>
         </div>
+        <label className="toggle bi-conn-card__toggle" title={row.enabled ? 'Disable' : 'Enable'}>
+          <input
+            type="checkbox"
+            checked={row.enabled}
+            disabled={busy}
+            onChange={(e) => onToggle(row, e.target.checked)}
+          />
+          <span className="toggle__track">
+            <span className="toggle__thumb" />
+          </span>
+        </label>
       </div>
 
-      <p className="bi-conn-card__hint">
+      <p className="bi-conn-card__hint bi-conn-card__hint--clamp">
         {statusHint(row)}
         {row.statusDetail ? ` — ${row.statusDetail}` : ''}
       </p>
       {row.lastError && (
         <p className="bi-conn-card__hint bi-vtext--red">Last error: {row.lastError}</p>
       )}
+
+      <div className="bi-conn-card__foot">
+        <button type="button" className="btn btn--ghost" disabled={busy} onClick={() => onTest(row)}>
+          {busy ? <span className="btn__spinner" aria-hidden="true" /> : 'Re-check'}
+        </button>
+        <button type="button" className="btn" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? 'Close' : 'Configure'}
+        </button>
+      </div>
 
       {open && (
         <div className="bi-conn-card__body">
